@@ -61,13 +61,6 @@ const marketPriority: Record<string, number> = {
   totals: 2.4,
 };
 
-const MAX_ABSOLUTE_FAVORITE_PRICE = 180;
-const MAX_LONGSHOT_PRICE = 325;
-const MAX_MARKET_HOLD = 0.12;
-const MIN_LINE_VALUE = 0.012;
-const MAX_EVENT_WINDOW_HOURS = 48;
-const MINIMUM_RECOMMENDATION_FLOOR = 8;
-
 const candidateLabel = (outcome: SportsbookOutcome) => {
   if (typeof outcome.point === 'number') {
     return `${outcome.name} ${outcome.point > 0 ? '+' : ''}${outcome.point}`;
@@ -94,7 +87,7 @@ const buildOutcomeKey = (eventId: string, marketKey: string, outcome: Sportsbook
 
 const startsInHours = (commenceTime: string) => (new Date(commenceTime).getTime() - Date.now()) / (1000 * 60 * 60);
 
-const isPriceInRange = (odds: number) => odds >= -MAX_ABSOLUTE_FAVORITE_PRICE && odds <= MAX_LONGSHOT_PRICE;
+const isPriceInRange = (odds: number) => odds >= -env.maxAbsoluteFavoritePrice && odds <= env.maxLongshotPrice;
 
 const buildMarketSnapshot = (event: BettingEvent) => {
   const snapshot = new Map<string, SportsbookOutcome[]>();
@@ -254,39 +247,71 @@ const buildSimulatedProbability = (
 };
 
 const buildPrefilterReason = (candidate: CandidateBet) => {
-  if (candidate.bookmakerCount < 2) {
-    return 'Only one book posted this exact selection.';
+  if (candidate.bookmakerCount < env.minBookmakerCount) {
+    return 'Too few books posted this exact selection.';
   }
 
   if (!isPriceInRange(candidate.odds)) {
     return 'Price sits in a poor risk-reward range.';
   }
 
-  if (candidate.marketHold > MAX_MARKET_HOLD) {
+  if (candidate.marketHold > env.maxMarketHold) {
     return 'Market vig is too high.';
   }
 
-  if (candidate.lineValue < MIN_LINE_VALUE) {
+  if (candidate.lineValue < env.minLineValue) {
     return 'Best line does not separate enough from the market consensus.';
   }
 
-  if (candidate.edgePercent < 0.015) {
+  if (candidate.edgePercent < env.minEdgePercent) {
     return 'Quant edge is too small.';
   }
 
-  if (candidate.expectedValue < 0.025) {
+  if (candidate.expectedValue < env.minExpectedValue) {
     return 'Expected value is too weak.';
   }
 
-  if (candidate.kellyFraction < 0.003) {
+  if (candidate.kellyFraction < env.minKellyFraction) {
     return 'Kelly stake is too small to justify the risk.';
   }
 
-  if (candidate.startsInHours <= 0 || candidate.startsInHours > MAX_EVENT_WINDOW_HOURS) {
+  if (candidate.startsInHours <= 0 || candidate.startsInHours > env.maxEventWindowHours) {
     return 'Event timing is outside the target recommendation window.';
   }
 
   return null;
+};
+
+const qualifiesForBackfill = (candidate: CandidateBet) => {
+  if (!isPriceInRange(candidate.odds)) {
+    return false;
+  }
+
+  if (candidate.marketHold > env.maxMarketHold * 1.1) {
+    return false;
+  }
+
+  if (candidate.lineValue < env.minLineValue * 0.5) {
+    return false;
+  }
+
+  if (candidate.edgePercent < env.minEdgePercent * 0.5) {
+    return false;
+  }
+
+  if (candidate.expectedValue <= 0) {
+    return false;
+  }
+
+  if (candidate.kellyFraction < Math.min(env.minKellyFraction, 0.001)) {
+    return false;
+  }
+
+  if (candidate.startsInHours <= 0 || candidate.startsInHours > env.maxEventWindowHours) {
+    return false;
+  }
+
+  return true;
 };
 
 const getEventModel = (analytics: AnalyticsOverview, matchup: string) =>
@@ -431,7 +456,7 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
 
 const prefilterCandidates = (candidates: CandidateBet[]) => {
   const passed = candidates.filter((candidate) => buildPrefilterReason(candidate) === null);
-  const desiredCount = Math.max(MINIMUM_RECOMMENDATION_FLOOR, env.maxRecommendations);
+  const desiredCount = Math.max(env.minRecommendationFloor, env.maxRecommendations);
 
   if (passed.length >= desiredCount) {
     return passed;
@@ -443,6 +468,7 @@ const prefilterCandidates = (candidates: CandidateBet[]) => {
       candidate,
       rejection: buildPrefilterReason(candidate),
     }))
+    .filter(({ candidate, rejection }) => rejection === null || qualifiesForBackfill(candidate))
     .sort((left, right) => {
       if (left.rejection === null && right.rejection !== null) {
         return -1;
@@ -676,7 +702,7 @@ export async function generateRecommendations(
 ): Promise<ProviderResult<Recommendation[]>> {
   const heuristicCandidates = prefilterCandidates(buildCandidates(events, news, analytics)).sort((left, right) => right.score - left.score);
   const heuristicRecommendations = toRecommendations(heuristicCandidates);
-  const llmCandidates = heuristicCandidates.slice(0, Math.max(env.maxRecommendations * 2, 24));
+  const llmCandidates = heuristicCandidates.slice(0, Math.max(env.maxRecommendations * 2, 30));
 
   if (env.llmProxyUrl) {
     try {

@@ -2,7 +2,7 @@
 
 - [x] Clarify Project Requirements
   iOS-first app built with React using Expo React Native.
-  Loads sportsbook odds, sports betting news, and returns the top 5 current bets.
+  Loads sportsbook odds, sports betting news, and returns a ranked live prediction board.
 
 - [x] Scaffold the Project
   Expo React Native TypeScript app created in the current workspace root.

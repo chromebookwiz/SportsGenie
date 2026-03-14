@@ -1,6 +1,6 @@
 # SportGenie
 
-SportGenie is currently set up as a Vercel-first Expo web app for sports betting analysis. It loads current sportsbook lines, recent sports-betting news, and a top-5 recommendation board powered first by a deterministic quant engine and optionally refined by an LLM.
+SportGenie is currently set up as a Vercel-first Expo web app for sports betting analysis. It loads current sportsbook lines, recent sports-betting news, and a larger ranked prediction board powered first by a deterministic quant engine and optionally refined by an LLM.
 
 The Expo SDK 54 setup remains in the repo, but the primary deployment target is now static web plus Vercel serverless API routes.
 
@@ -31,6 +31,8 @@ The Expo SDK 54 setup remains in the repo, but the primary deployment target is 
 - Adds responsive layouts, sport filters, haptic feedback where available, and tap-to-open news cards so the app feels good on desktop and mobile web.
 - Supports Expo web for quick browser-based testing with `npm run web` and static web export with `npm run web:build`.
 - Includes both a lightweight Express proxy in `server/` and Vercel serverless API routes in `api/` for secure OpenRouter calls and server-side player-stats aggregation.
+- Exposes recommendation-volume and quant-screen tuning knobs in `.env` so you can widen or tighten the board without changing code.
+- Uses a softer backfill floor so a larger board can still expand on busy slates without filling thin slates with negative-EV junk.
 
 ## Environment setup
 

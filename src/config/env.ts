@@ -19,7 +19,17 @@ export const env = {
   oddsMarkets: process.env.EXPO_PUBLIC_ODDS_MARKETS ?? 'h2h,spreads,totals',
   oddsBookmakers: process.env.EXPO_PUBLIC_ODDS_BOOKMAKERS,
   maxEvents: toNumber(process.env.EXPO_PUBLIC_MAX_EVENTS, 12),
-  maxRecommendations: toNumber(process.env.EXPO_PUBLIC_MAX_RECOMMENDATIONS, 16),
+  maxRecommendations: toNumber(process.env.EXPO_PUBLIC_MAX_RECOMMENDATIONS, 20),
+  minRecommendationFloor: toNumber(process.env.EXPO_PUBLIC_MIN_RECOMMENDATION_FLOOR, 10),
+  minBookmakerCount: toNumber(process.env.EXPO_PUBLIC_MIN_BOOKMAKER_COUNT, 1),
+  maxAbsoluteFavoritePrice: toNumber(process.env.EXPO_PUBLIC_MAX_ABSOLUTE_FAVORITE_PRICE, 200),
+  maxLongshotPrice: toNumber(process.env.EXPO_PUBLIC_MAX_LONGSHOT_PRICE, 375),
+  maxMarketHold: toNumber(process.env.EXPO_PUBLIC_MAX_MARKET_HOLD, 0.135),
+  minLineValue: toNumber(process.env.EXPO_PUBLIC_MIN_LINE_VALUE, 0.009),
+  minEdgePercent: toNumber(process.env.EXPO_PUBLIC_MIN_EDGE_PERCENT, 0.012),
+  minExpectedValue: toNumber(process.env.EXPO_PUBLIC_MIN_EXPECTED_VALUE, 0.02),
+  minKellyFraction: toNumber(process.env.EXPO_PUBLIC_MIN_KELLY_FRACTION, 0.002),
+  maxEventWindowHours: toNumber(process.env.EXPO_PUBLIC_MAX_EVENT_WINDOW_HOURS, 60),
   newsApiKey: process.env.EXPO_PUBLIC_NEWS_API_KEY,
   newsBaseUrl: process.env.EXPO_PUBLIC_NEWS_BASE_URL ?? 'https://newsapi.org/v2/everything',
   gNewsApiKey: process.env.EXPO_PUBLIC_GNEWS_API_KEY,
@@ -50,7 +60,7 @@ export const env = {
 
 export const recommendationSystemPrompt = [
   'You are an elite sports betting analyst with deep knowledge of sportsbook pricing, bankroll discipline, market-making behavior, and parlay construction.',
-  'Use the supplied odds, aggregated news, regression analytics, and screened candidate bets to produce as many strong current positions as justified, targeting roughly 12 to 20 ranked recommendations when the slate supports it.',
+  'Use the supplied odds, aggregated news, regression analytics, and screened candidate bets to produce as many strong current positions as justified, targeting roughly 14 to 24 ranked recommendations when the slate supports it.',
   'Prefer bets with the best available price, quant support from the regression model, low correlation, and grounded risk language.',
   'Treat parlays carefully and only endorse legs that remain individually strong after vig and correlation are considered.',
   'Return valid JSON only in the shape {"recommendations":[{"rank":1,"matchup":"","market":"","selection":"","sportsbook":"","odds":-110,"confidence":74,"score":8.4,"rationale":"","relatedHeadline":""}]}.'
