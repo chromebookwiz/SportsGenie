@@ -111,19 +111,54 @@ type WebLlmEngine = {
   };
 };
 
-let enginePromise: Promise<WebLlmEngine> | null = null;
-let activeModelId = env.webLlmModel;
+type WebLlmModule = {
+  CreateMLCEngine: (
+    modelId: string,
+    options?: {
+      initProgressCallback?: (progress: unknown) => void;
+    }
+  ) => Promise<WebLlmEngine>;
+};
 
-export const webLlmModelOptions = [
+const defaultModelOptions = [
   'Llama-3.1-8B-Instruct-q4f32_1-MLC',
   'Llama-3.2-3B-Instruct-q4f32_1-MLC',
   'Phi-3.5-mini-instruct-q4f32_1-MLC',
   'Qwen2.5-7B-Instruct-q4f32_1-MLC',
 ];
 
+const buildModelOptions = () => {
+  const unique = new Set<string>();
+
+  for (const modelId of [...env.webLlmModels, env.webLlmModel, ...defaultModelOptions]) {
+    const normalized = String(modelId || '').trim();
+
+    if (normalized) {
+      unique.add(normalized);
+    }
+  }
+
+  return Array.from(unique);
+};
+
+let webLlmModulePromise: Promise<WebLlmModule> | null = null;
+const engineCache = new Map<string, Promise<WebLlmEngine>>();
+const loadedModelIds = new Set<string>();
+let activeModelId = env.webLlmModel;
+
+export const webLlmModelOptions = buildModelOptions();
+
 const resolveModelId = (modelId?: string) => {
   const candidate = String(modelId ?? activeModelId ?? env.webLlmModel).trim();
   return candidate || env.webLlmModel;
+};
+
+const getWebLlmModule = () => {
+  if (!webLlmModulePromise) {
+    webLlmModulePromise = import('@mlc-ai/web-llm') as Promise<WebLlmModule>;
+  }
+
+  return webLlmModulePromise;
 };
 
 const hasWebGpuSupport = () => {
@@ -771,21 +806,34 @@ const getEngine = async (modelId?: string) => {
 
   const requestedModel = resolveModelId(modelId);
 
-  if (!enginePromise || activeModelId !== requestedModel) {
-    activeModelId = requestedModel;
-    enginePromise = import('@mlc-ai/web-llm')
-      .then(async ({ CreateMLCEngine }) => {
-        const engine = (await CreateMLCEngine(requestedModel, {
-          initProgressCallback: () => undefined,
-        })) as WebLlmEngine;
+  const cachedEngine = engineCache.get(requestedModel);
 
-        return engine;
-      })
-      .catch((error) => {
-        enginePromise = null;
-        throw error;
-      });
+  if (cachedEngine) {
+    return cachedEngine.then((engine) => {
+      loadedModelIds.add(requestedModel);
+      activeModelId = requestedModel;
+      return engine;
+    });
   }
+
+  const enginePromise = getWebLlmModule()
+    .then(async ({ CreateMLCEngine }) => {
+      const engine = await CreateMLCEngine(requestedModel, {
+        initProgressCallback: () => undefined,
+      });
+
+      loadedModelIds.add(requestedModel);
+      activeModelId = requestedModel;
+
+      return engine;
+    })
+    .catch((error) => {
+      engineCache.delete(requestedModel);
+      loadedModelIds.delete(requestedModel);
+      throw error;
+    });
+
+  engineCache.set(requestedModel, enginePromise);
 
   return enginePromise;
 };
@@ -793,6 +841,8 @@ const getEngine = async (modelId?: string) => {
 export const isWebLlmSupported = () => Platform.OS === 'web' && env.enableWebLlm && hasWebGpuSupport();
 
 export const getActiveWebLlmModel = () => activeModelId;
+
+export const getLoadedWebLlmModels = () => Array.from(loadedModelIds);
 
 export const preloadWebLlmModel = async (modelId?: string) => {
   const resolved = resolveModelId(modelId);

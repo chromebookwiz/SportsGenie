@@ -92,6 +92,10 @@ export const env = {
     value.toLowerCase()
   ),
   enableWebLlm: toBoolean(process.env.EXPO_PUBLIC_ENABLE_WEBLLM, true),
+  webLlmModels: toList(
+    process.env.EXPO_PUBLIC_WEBLLM_MODELS,
+    'Llama-3.1-8B-Instruct-q4f32_1-MLC,Llama-3.2-3B-Instruct-q4f32_1-MLC,Phi-3.5-mini-instruct-q4f32_1-MLC,Qwen2.5-7B-Instruct-q4f32_1-MLC'
+  ),
   webLlmModel: process.env.EXPO_PUBLIC_WEBLLM_MODEL ?? 'Llama-3.1-8B-Instruct-q4f32_1-MLC',
   webLlmToolMaxRounds: toNumber(process.env.EXPO_PUBLIC_WEBLLM_TOOL_MAX_ROUNDS, 3),
   openRouterApiKey: process.env.EXPO_PUBLIC_OPENROUTER_API_KEY,

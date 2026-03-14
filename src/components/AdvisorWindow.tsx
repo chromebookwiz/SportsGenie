@@ -15,6 +15,7 @@ import {
 import {
   askWebLlmAdvisor,
   getActiveWebLlmModel,
+  getLoadedWebLlmModels,
   isWebLlmSupported,
   preloadWebLlmModel,
   webLlmModelOptions,
@@ -91,6 +92,8 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [selectedModel, setSelectedModel] = useState(getActiveWebLlmModel());
+  const [activeModel, setActiveModel] = useState(getActiveWebLlmModel());
+  const [loadedModels, setLoadedModels] = useState<string[]>(() => getLoadedWebLlmModels());
   const hasPositionRef = useRef(false);
   const hydratedRef = useRef(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
@@ -112,6 +115,7 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
     }),
     [analytics, events, news, providerSummary, recommendations, selectedSport]
   );
+  const loadedModelSet = useMemo(() => new Set(loadedModels), [loadedModels]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
@@ -145,6 +149,9 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
       if (typeof persisted.modelId === 'string' && persisted.modelId.trim()) {
         setSelectedModel(persisted.modelId.trim());
       }
+
+      setActiveModel(getActiveWebLlmModel());
+      setLoadedModels(getLoadedWebLlmModels());
     } catch {
       setMessages(defaultMessages);
     } finally {
@@ -199,7 +206,8 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
 
     try {
       await preloadWebLlmModel(trimmedModel);
-      setSelectedModel(getActiveWebLlmModel());
+      setActiveModel(getActiveWebLlmModel());
+      setLoadedModels(getLoadedWebLlmModels());
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Model load failed');
     } finally {
@@ -269,6 +277,9 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         modelId: selectedModel.trim(),
       });
 
+      setActiveModel(getActiveWebLlmModel());
+      setLoadedModels(getLoadedWebLlmModels());
+
       setMessages((current) => [
         ...current,
         {
@@ -335,11 +346,6 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
             <Text style={styles.windowSubtitle}>{supported ? 'Local WebLLM with research tools' : 'WebLLM unavailable on this runtime'}</Text>
           </View>
           <View style={styles.windowActions}>
-            {canDragWindow ? (
-              <View style={styles.dragPill}>
-                <Text style={styles.dragPillText}>Drag</Text>
-              </View>
-            ) : null}
             <Pressable style={styles.windowActionButton} onPress={() => setWindowState('minimized')}>
               <Text style={styles.windowActionText}>Min</Text>
             </Pressable>
@@ -359,10 +365,23 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
             {webLlmModelOptions.map((modelId) => (
               <Pressable
                 key={modelId}
-                style={[styles.modelChip, selectedModel === modelId ? styles.modelChipActive : null]}
+                style={[
+                  styles.modelChip,
+                  selectedModel === modelId ? styles.modelChipActive : null,
+                  loadedModelSet.has(modelId) ? styles.modelChipLoaded : null,
+                ]}
                 onPress={() => setSelectedModel(modelId)}
               >
                 <Text style={[styles.modelChipText, selectedModel === modelId ? styles.modelChipTextActive : null]}>{modelId}</Text>
+                <Text style={[styles.modelChipMetaText, selectedModel === modelId ? styles.modelChipMetaTextActive : null]}>
+                  {activeModel === modelId && loadedModelSet.has(modelId)
+                    ? 'Active'
+                    : loadedModelSet.has(modelId)
+                      ? 'Loaded'
+                      : activeModel === modelId
+                        ? 'Default'
+                        : 'Available'}
+                </Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -380,10 +399,14 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
               style={[styles.loadButton, modelLoading ? styles.loadButtonDisabled : null]}
               onPress={() => void loadSelectedModel()}
             >
-              <Text style={styles.loadButtonText}>{modelLoading ? 'Loading...' : 'Load model'}</Text>
+              <Text style={styles.loadButtonText}>
+                {modelLoading ? 'Loading...' : loadedModelSet.has(selectedModel) ? 'Use loaded model' : 'Load model'}
+              </Text>
             </Pressable>
           </View>
-          <Text style={styles.modelMetaText}>Active model: {getActiveWebLlmModel()}</Text>
+          <Text style={styles.modelMetaText}>
+            {loadedModelSet.has(activeModel) ? `Active model: ${activeModel}` : `Default model: ${activeModel}`}
+          </Text>
         </View>
 
         <View style={styles.quickPromptRow}>
@@ -549,10 +572,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3EEE4',
     paddingHorizontal: 10,
     paddingVertical: 8,
+    gap: 2,
   },
   modelChipActive: {
     borderColor: '#111111',
     backgroundColor: '#111111',
+  },
+  modelChipLoaded: {
+    borderColor: '#857B6D',
   },
   modelChipText: {
     color: '#2B2925',
@@ -561,6 +588,16 @@ const styles = StyleSheet.create({
   },
   modelChipTextActive: {
     color: '#F5F1E8',
+  },
+  modelChipMetaText: {
+    color: '#6E675D',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  modelChipMetaTextActive: {
+    color: '#BFB6A9',
   },
   modelInputRow: {
     flexDirection: 'row',
