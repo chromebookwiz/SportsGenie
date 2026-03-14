@@ -2,6 +2,10 @@ import { env } from '../config/env';
 import { mockEvents } from '../data/mock';
 import type { BettingEvent, ProviderResult, Sportsbook, SportsbookMarket, SportsbookOutcome } from '../types/sports';
 
+type FetchOptions = {
+  forceRefresh?: boolean;
+};
+
 type OddsApiOutcome = SportsbookOutcome;
 
 type OddsApiMarket = {
@@ -43,6 +47,17 @@ const buildUrl = () => {
   return `https://api.the-odds-api.com/v4/sports/upcoming/odds/?${params.toString()}`;
 };
 
+const buildFreshUrl = (url: string, forceRefresh?: boolean) => {
+  if (!forceRefresh) {
+    return url;
+  }
+
+  const nextUrl = new URL(url);
+  nextUrl.searchParams.set('_ts', String(Date.now()));
+
+  return nextUrl.toString();
+};
+
 const normalizeBookmakers = (bookmakers: OddsApiBookmaker[]): Sportsbook[] =>
   bookmakers.map((bookmaker) => ({
     key: bookmaker.key,
@@ -68,7 +83,7 @@ const normalizeEvents = (events: OddsApiEvent[]): BettingEvent[] =>
     bookmakers: normalizeBookmakers(event.bookmakers ?? []),
   }));
 
-export async function fetchOdds(): Promise<ProviderResult<BettingEvent[]>> {
+export async function fetchOdds({ forceRefresh = false }: FetchOptions = {}): Promise<ProviderResult<BettingEvent[]>> {
   if (!env.oddsApiKey) {
     return {
       data: mockEvents,
@@ -77,7 +92,9 @@ export async function fetchOdds(): Promise<ProviderResult<BettingEvent[]>> {
   }
 
   try {
-    const response = await fetch(buildUrl());
+    const response = await fetch(buildFreshUrl(buildUrl(), forceRefresh), {
+      cache: forceRefresh ? 'no-store' : 'default',
+    });
 
     if (!response.ok) {
       throw new Error(`Odds provider returned ${response.status}`);

@@ -15,6 +15,7 @@ The Expo SDK 54 setup remains in the repo, but the primary deployment target is 
   - GNews with `EXPO_PUBLIC_GNEWS_API_KEY`
   - Currents with `EXPO_PUBLIC_CURRENTS_API_KEY`
 - Aggregates and deduplicates news across the configured providers in `EXPO_PUBLIC_NEWS_PROVIDER_ORDER`.
+- Applies a freshness window to news so the dashboard prefers current headlines and the refresh action can force uncached refetches.
 - Sends the combined context to either:
   - a secure proxy you provide with `EXPO_PUBLIC_LLM_PROXY_URL`, or
   - OpenRouter directly with `EXPO_PUBLIC_OPENROUTER_API_KEY`, or
@@ -33,6 +34,7 @@ The Expo SDK 54 setup remains in the repo, but the primary deployment target is 
 - Includes both a lightweight Express proxy in `server/` and Vercel serverless API routes in `api/` for secure OpenRouter calls and server-side player-stats aggregation.
 - Exposes recommendation-volume and quant-screen tuning knobs in `.env` so you can widen or tighten the board without changing code.
 - Uses a softer backfill floor so a larger board can still expand on busy slates without filling thin slates with negative-EV junk.
+- Threads a forced no-cache refresh through odds, news, and player-data loaders so the refresh button triggers a real resync instead of relying on browser cache behavior.
 
 ## Environment setup
 

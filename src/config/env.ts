@@ -43,6 +43,7 @@ export const env = {
   newsQuery: process.env.EXPO_PUBLIC_NEWS_QUERY ?? 'sports betting OR odds OR NFL OR NBA OR MLB OR NHL OR UFC OR soccer',
   newsLanguage: process.env.EXPO_PUBLIC_NEWS_LANGUAGE ?? 'en',
   newsPageSize: toNumber(process.env.EXPO_PUBLIC_NEWS_PAGE_SIZE, 10),
+  newsMaxAgeHours: toNumber(process.env.EXPO_PUBLIC_NEWS_MAX_AGE_HOURS, 72),
   newsProviderOrder: (process.env.EXPO_PUBLIC_NEWS_PROVIDER_ORDER ?? 'google,espn,newsapi,gnews,currents')
     .split(',')
     .map((value: string) => value.trim().toLowerCase())

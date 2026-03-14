@@ -7,10 +7,10 @@ import { buildParlayRecommendations } from './parlays';
 import { fetchPlayerProfiles } from './playerStats';
 import { generateRecommendations } from './recommendations';
 
-export async function loadDashboardData(): Promise<DashboardData> {
-  const [oddsResult, newsResult] = await Promise.all([fetchOdds(), fetchNews()]);
+export async function loadDashboardData({ forceRefresh = false }: { forceRefresh?: boolean } = {}): Promise<DashboardData> {
+  const [oddsResult, newsResult] = await Promise.all([fetchOdds({ forceRefresh }), fetchNews({ forceRefresh })]);
   const [playerStatsResult, backtestResult] = await Promise.all([
-    fetchPlayerProfiles(oddsResult.data),
+    fetchPlayerProfiles(oddsResult.data, { forceRefresh }),
     runBacktest(),
   ]);
   const analyticsResult = await buildAnalyticsOverview(oddsResult.data, playerStatsResult.data);

@@ -2,6 +2,10 @@ import { env } from '../config/env';
 import { mockNews } from '../data/mock';
 import type { NewsArticle, ProviderResult } from '../types/sports';
 
+type FetchOptions = {
+  forceRefresh?: boolean;
+};
+
 type RssFeedItem = {
   title?: string;
   description?: string;
@@ -81,6 +85,22 @@ const buildCurrentsUrl = () => {
 
   return `${env.currentsBaseUrl}?${params.toString()}`;
 };
+
+const buildFreshUrl = (url: string, forceRefresh?: boolean) => {
+  if (!forceRefresh) {
+    return url;
+  }
+
+  const nextUrl = new URL(url);
+  nextUrl.searchParams.set('_ts', String(Date.now()));
+
+  return nextUrl.toString();
+};
+
+const fetchFresh = async (url: string, { forceRefresh = false }: FetchOptions = {}) =>
+  fetch(buildFreshUrl(url, forceRefresh), {
+    cache: forceRefresh ? 'no-store' : 'default',
+  });
 
 const decodeXmlEntities = (value: string) =>
   value
@@ -190,6 +210,16 @@ const dedupeArticles = (articles: NewsArticle[]) => {
   });
 };
 
+const isFreshArticle = (article: NewsArticle) => {
+  const publishedAt = Date.parse(article.publishedAt);
+
+  if (!Number.isFinite(publishedAt)) {
+    return false;
+  }
+
+  return Date.now() - publishedAt <= env.newsMaxAgeHours * 60 * 60 * 1000;
+};
+
 const isRelevantArticle = (article: NewsArticle) => {
   const blob = `${article.title} ${article.description} ${article.source}`.toLowerCase();
   const includeTerms = [
@@ -214,12 +244,12 @@ const isRelevantArticle = (article: NewsArticle) => {
   return includeTerms.some((term) => blob.includes(term)) && !excludeTerms.some((term) => blob.includes(term));
 };
 
-const fetchNewsApiArticles = async () => {
+const fetchNewsApiArticles = async (options?: FetchOptions) => {
   if (!env.newsApiKey) {
     return null;
   }
 
-  const response = await fetch(buildNewsApiUrl());
+  const response = await fetchFresh(buildNewsApiUrl(), options);
 
   if (!response.ok) {
     throw new Error(`NewsAPI returned ${response.status}`);
@@ -228,12 +258,12 @@ const fetchNewsApiArticles = async () => {
   return normalizeArticles((await response.json()) as NewsApiResponse);
 };
 
-const fetchGNewsArticles = async () => {
+const fetchGNewsArticles = async (options?: FetchOptions) => {
   if (!env.gNewsApiKey) {
     return null;
   }
 
-  const response = await fetch(buildGNewsUrl());
+  const response = await fetchFresh(buildGNewsUrl(), options);
 
   if (!response.ok) {
     throw new Error(`GNews returned ${response.status}`);
@@ -242,12 +272,12 @@ const fetchGNewsArticles = async () => {
   return normalizeGNewsArticles((await response.json()) as GNewsResponse);
 };
 
-const fetchCurrentsArticles = async () => {
+const fetchCurrentsArticles = async (options?: FetchOptions) => {
   if (!env.currentsApiKey) {
     return null;
   }
 
-  const response = await fetch(buildCurrentsUrl());
+  const response = await fetchFresh(buildCurrentsUrl(), options);
 
   if (!response.ok) {
     throw new Error(`Currents returned ${response.status}`);
@@ -256,8 +286,8 @@ const fetchCurrentsArticles = async () => {
   return normalizeCurrentsArticles((await response.json()) as CurrentsResponse);
 };
 
-const fetchGoogleNewsArticles = async () => {
-  const response = await fetch(env.googleNewsRssUrl);
+const fetchGoogleNewsArticles = async (options?: FetchOptions) => {
+  const response = await fetchFresh(env.googleNewsRssUrl, options);
 
   if (!response.ok) {
     throw new Error(`Google News RSS returned ${response.status}`);
@@ -266,8 +296,8 @@ const fetchGoogleNewsArticles = async () => {
   return normalizeRssArticles(parseRssItems(await response.text()), 'Google News', googleRssDescriptionSource);
 };
 
-const fetchEspnRssArticles = async () => {
-  const response = await fetch(env.espnRssUrl);
+const fetchEspnRssArticles = async (options?: FetchOptions) => {
+  const response = await fetchFresh(env.espnRssUrl, options);
 
   if (!response.ok) {
     throw new Error(`ESPN RSS returned ${response.status}`);
@@ -276,7 +306,7 @@ const fetchEspnRssArticles = async () => {
   return normalizeRssArticles(parseRssItems(await response.text()), 'ESPN');
 };
 
-const providerLoaders: Record<string, () => Promise<NewsArticle[] | null>> = {
+const providerLoaders: Record<string, (options?: FetchOptions) => Promise<NewsArticle[] | null>> = {
   google: fetchGoogleNewsArticles,
   espn: fetchEspnRssArticles,
   newsapi: fetchNewsApiArticles,
@@ -284,7 +314,7 @@ const providerLoaders: Record<string, () => Promise<NewsArticle[] | null>> = {
   currents: fetchCurrentsArticles,
 };
 
-export async function fetchNews(): Promise<ProviderResult<NewsArticle[]>> {
+export async function fetchNews(options?: FetchOptions): Promise<ProviderResult<NewsArticle[]>> {
   const activeProviders = env.newsProviderOrder.filter((provider: string) => providerLoaders[provider]);
 
   if (activeProviders.length === 0) {
@@ -298,7 +328,7 @@ export async function fetchNews(): Promise<ProviderResult<NewsArticle[]>> {
     const settledResults = await Promise.allSettled(
       activeProviders.map(async (provider: string) => ({
         provider,
-        articles: await providerLoaders[provider](),
+        articles: await providerLoaders[provider](options),
       }))
     );
 
@@ -306,7 +336,9 @@ export async function fetchNews(): Promise<ProviderResult<NewsArticle[]>> {
       .filter((result): result is PromiseFulfilledResult<{ provider: string; articles: NewsArticle[] | null }> => result.status === 'fulfilled')
       .filter((result) => (result.value.articles?.length ?? 0) > 0);
 
-    const articles = dedupeArticles(successful.flatMap((result) => result.value.articles ?? []).filter(isRelevantArticle)).slice(0, env.newsPageSize * 3);
+    const articles = dedupeArticles(successful.flatMap((result) => result.value.articles ?? []).filter(isRelevantArticle).filter(isFreshArticle))
+      .sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt))
+      .slice(0, env.newsPageSize * 3);
 
     if (articles.length === 0) {
       throw new Error('News provider returned no articles');

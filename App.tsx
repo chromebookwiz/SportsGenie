@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -276,11 +276,15 @@ export default function App() {
   const [selectedSport, setSelectedSport] = useState<string>('All sports');
   const [sectionMode, setSectionMode] = useState<SectionMode>('all');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const latestRequestId = useRef(0);
+  const mountedRef = useRef(true);
 
   const isTablet = width >= 720;
   const isWide = width >= 1024;
 
   const fetchDashboard = async (mode: LoadingState) => {
+    const requestId = latestRequestId.current + 1;
+    latestRequestId.current = requestId;
     setLoadingState(mode);
     setErrorMessage(null);
 
@@ -289,21 +293,36 @@ export default function App() {
         await impact();
       }
 
-      const nextData = await loadDashboardData();
+      const nextData = await loadDashboardData({ forceRefresh: mode === 'refreshing' });
+
+      if (!mountedRef.current || latestRequestId.current !== requestId) {
+        return;
+      }
+
       setData(nextData);
       setLastUpdated(new Date().toISOString());
       await success();
     } catch (error) {
+      if (!mountedRef.current || latestRequestId.current !== requestId) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : 'Unexpected error while loading the dashboard.';
       setErrorMessage(message);
       await warning();
     } finally {
-      setLoadingState('idle');
+      if (mountedRef.current && latestRequestId.current === requestId) {
+        setLoadingState('idle');
+      }
     }
   };
 
   useEffect(() => {
     void fetchDashboard('loading');
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   const recommendationCount = data?.recommendations.length ?? 0;
@@ -472,7 +491,11 @@ export default function App() {
               <Text style={styles.moodCaption}>{moodCaption}</Text>
             </View>
             <View style={styles.heroActionsRow}>
-              <Pressable style={styles.primaryButton} onPress={() => void fetchDashboard('refreshing')}>
+              <Pressable
+                disabled={loadingState !== 'idle'}
+                style={[styles.primaryButton, loadingState !== 'idle' ? styles.primaryButtonDisabled : null]}
+                onPress={() => void fetchDashboard('refreshing')}
+              >
                 <Text style={styles.primaryButtonText}>Refresh board</Text>
               </Pressable>
               <View style={styles.snapshotCard}>
@@ -691,6 +714,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     justifyContent: 'center',
     minHeight: 52,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.55,
   },
   primaryButtonText: {
     color: '#0B1620',

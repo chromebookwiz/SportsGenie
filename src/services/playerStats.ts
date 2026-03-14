@@ -2,6 +2,10 @@ import { env } from '../config/env';
 import { mockPlayerProfiles } from '../data/playerPerformance';
 import type { BettingEvent, PlayerPerformanceProfile, ProviderResult } from '../types/sports';
 
+type FetchOptions = {
+  forceRefresh?: boolean;
+};
+
 type PlayerStatsProxyResponse = {
   profiles?: PlayerPerformanceProfile[];
   provider?: string;
@@ -27,7 +31,10 @@ const filterProfilesForEvents = (profiles: PlayerPerformanceProfile[], events: B
   return profiles.filter((profile) => teams.has(profile.team) || sportKeys.has(profile.sportKey));
 };
 
-export async function fetchPlayerProfiles(events: BettingEvent[]): Promise<ProviderResult<PlayerPerformanceProfile[]>> {
+export async function fetchPlayerProfiles(
+  events: BettingEvent[],
+  { forceRefresh = false }: FetchOptions = {}
+): Promise<ProviderResult<PlayerPerformanceProfile[]>> {
   const fallbackProfiles = filterProfilesForEvents(mockPlayerProfiles, events);
 
   if (env.proxyBaseUrl == null) {
@@ -41,7 +48,18 @@ export async function fetchPlayerProfiles(events: BettingEvent[]): Promise<Provi
     const baseUrl = env.proxyBaseUrl ?? '';
     const teams = Array.from(new Set(events.flatMap((event) => [event.homeTeam, event.awayTeam]))).join(',');
     const sportKeys = Array.from(new Set(events.map((event) => event.sportKey))).join(',');
-    const response = await fetch(`${baseUrl}/api/player-stats?teams=${encodeURIComponent(teams)}&sportKeys=${encodeURIComponent(sportKeys)}`);
+    const url = new URL(`${baseUrl}/api/player-stats`, baseUrl ? undefined : 'https://sportgenie.local');
+    url.searchParams.set('teams', teams);
+    url.searchParams.set('sportKeys', sportKeys);
+
+    if (forceRefresh) {
+      url.searchParams.set('_ts', String(Date.now()));
+    }
+
+    const requestUrl = baseUrl ? url.toString() : `${url.pathname}${url.search}`;
+    const response = await fetch(requestUrl, {
+      cache: forceRefresh ? 'no-store' : 'default',
+    });
 
     if (!response.ok) {
       throw new Error(`Player-stats proxy returned ${response.status}`);

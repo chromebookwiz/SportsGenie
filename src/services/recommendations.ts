@@ -18,6 +18,7 @@ type CandidateBet = {
   market: string;
   selection: string;
   sportsbook: string;
+  lastUpdate: string;
   odds: number;
   point?: number | null;
   score: number;
@@ -28,6 +29,8 @@ type CandidateBet = {
   marketHold: number;
   lineValue: number;
   startsInHours: number;
+  marketFreshnessHours: number;
+  modelAgreement: number;
   edgePercent: number;
   modelDelta: number;
   supportingPlayers: string[];
@@ -87,7 +90,41 @@ const buildOutcomeKey = (eventId: string, marketKey: string, outcome: Sportsbook
 
 const startsInHours = (commenceTime: string) => (new Date(commenceTime).getTime() - Date.now()) / (1000 * 60 * 60);
 
+const hoursSince = (value: string) => {
+  const timestamp = Date.parse(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return 999;
+  }
+
+  return Math.max(0, (Date.now() - timestamp) / (1000 * 60 * 60));
+};
+
 const isPriceInRange = (odds: number) => odds >= -env.maxAbsoluteFavoritePrice && odds <= env.maxLongshotPrice;
+
+const probabilityBlendWeights = (marketKey: string) => {
+  if (marketKey === 'totals') {
+    return {
+      simulated: 0.46,
+      analytical: 0.29,
+      consensus: 0.25,
+    };
+  }
+
+  if (marketKey === 'spreads') {
+    return {
+      simulated: 0.42,
+      analytical: 0.33,
+      consensus: 0.25,
+    };
+  }
+
+  return {
+    simulated: 0.38,
+    analytical: 0.37,
+    consensus: 0.25,
+  };
+};
 
 const buildMarketSnapshot = (event: BettingEvent) => {
   const snapshot = new Map<string, SportsbookOutcome[]>();
@@ -358,6 +395,7 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
             market: market.key,
             selection: candidateLabel(outcome),
             sportsbook: bookmaker.title,
+            lastUpdate: market.lastUpdate,
             odds: outcome.price,
             point: outcome.point,
             score: baseScore + newsBonus + timingBonus,
@@ -368,6 +406,8 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
             marketHold: 0,
             lineValue: 0,
             startsInHours: eventStartsInHours,
+            marketFreshnessHours: hoursSince(market.lastUpdate),
+            modelAgreement: 0,
             edgePercent: 0,
             modelDelta,
             supportingPlayers,
@@ -413,17 +453,37 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
     };
     const analyticalProbability = buildModelProbability(event, best.market, eventOutcome, analytics);
     const simulatedWinRate = buildSimulatedProbability(event, best.market, eventOutcome, analytics);
+    const blendWeights = probabilityBlendWeights(best.market);
+    const modelAgreement = Number((1 - Math.abs(analyticalProbability - simulatedWinRate)).toFixed(3));
+    const marketFreshnessHours = Number(hoursSince(best.lastUpdate).toFixed(2));
+    const freshnessScore = clamp(1 - marketFreshnessHours / 18, 0, 1);
     const fairProbability = Number(
-      clamp(simulatedWinRate * 0.5 + analyticalProbability * 0.35 + (consensusFairProbability ?? bestImplied) * 0.15, 0.05, 0.95).toFixed(3)
+      clamp(
+        simulatedWinRate * blendWeights.simulated +
+          analyticalProbability * blendWeights.analytical +
+          (consensusFairProbability ?? bestImplied) * blendWeights.consensus,
+        0.05,
+        0.95
+      ).toFixed(3)
     );
     const expectedValue = Number(calculateExpectedValue(fairProbability, best.odds).toFixed(3));
     const kellyFraction = Number(calculateKellyFraction(fairProbability, best.odds).toFixed(3));
     const edgePercent = Number(clamp(fairProbability - bestImplied, 0, 0.22).toFixed(3));
     const confidence = Math.min(
       95,
-      Math.round(54 + edgePercent * 170 + expectedValue * 120 + best.modelDelta * 35 + kellyFraction * 120)
+      Math.round(
+        50 +
+          edgePercent * 170 +
+          expectedValue * 120 +
+          best.modelDelta * 35 +
+          kellyFraction * 120 +
+          modelAgreement * 16 +
+          freshnessScore * 8
+      )
     );
-    const score = Number((best.score + expectedValue * 24 + edgePercent * 18 + kellyFraction * 30 - marketHold * 5).toFixed(2));
+    const score = Number(
+      (best.score + expectedValue * 24 + edgePercent * 18 + kellyFraction * 30 + modelAgreement * 3 + freshnessScore * 2 - marketHold * 5).toFixed(2)
+    );
 
     return {
       ...best,
@@ -432,6 +492,8 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
       bookmakerCount: candidates.length,
       marketHold,
       lineValue,
+      marketFreshnessHours,
+      modelAgreement,
       edgePercent,
       impliedProbability: bestImplied,
       fairProbability,
@@ -439,8 +501,8 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
       kellyFraction,
       simulatedWinRate: Number(simulatedWinRate.toFixed(3)),
       rationale: best.relatedHeadline
-        ? `Best available price beats the consensus number across books and aligns with the latest news signal: ${best.relatedHeadline}`
-        : 'Best available price beats the consensus number across books and rates well in a high-liquidity market.',
+        ? `Best available price beats the consensus number across books, the model and simulation agree, and the latest news signal supports it: ${best.relatedHeadline}`
+        : 'Best available price beats the consensus number across books, the model and simulation agree, and the market is still fresh enough to trust.',
     };
       });
   });
