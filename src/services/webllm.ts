@@ -121,10 +121,10 @@ type WebLlmModule = {
 };
 
 const defaultModelOptions = [
-  'Llama-3.1-8B-Instruct-q4f32_1-MLC',
   'Llama-3.2-3B-Instruct-q4f32_1-MLC',
   'Phi-3.5-mini-instruct-q4f32_1-MLC',
   'Qwen2.5-7B-Instruct-q4f32_1-MLC',
+  'Llama-3.1-8B-Instruct-q4f32_1-MLC',
 ];
 
 const buildModelOptions = () => {
@@ -141,9 +141,18 @@ const buildModelOptions = () => {
   return Array.from(unique);
 };
 
+export type WebLlmLoadProgress = {
+  progress: number;
+  text: string;
+};
+
+type WebLlmProgressListener = (progress: WebLlmLoadProgress) => void;
+
 let webLlmModulePromise: Promise<WebLlmModule> | null = null;
 const engineCache = new Map<string, Promise<WebLlmEngine>>();
 const loadedModelIds = new Set<string>();
+const modelProgressListeners = new Map<string, Set<WebLlmProgressListener>>();
+const latestModelProgress = new Map<string, WebLlmLoadProgress>();
 let activeModelId = env.webLlmModel;
 
 export const webLlmModelOptions = buildModelOptions();
@@ -151,6 +160,87 @@ export const webLlmModelOptions = buildModelOptions();
 const resolveModelId = (modelId?: string) => {
   const candidate = String(modelId ?? activeModelId ?? env.webLlmModel).trim();
   return candidate || env.webLlmModel;
+};
+
+const normalizeProgressValue = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1 ? value / 100 : value;
+  }
+
+  return undefined;
+};
+
+const normalizeLoadProgress = (progress: unknown): WebLlmLoadProgress => {
+  if (typeof progress === 'string') {
+    return {
+      progress: 0,
+      text: progress.trim() || 'Preparing model...',
+    };
+  }
+
+  if (!progress || typeof progress !== 'object') {
+    return {
+      progress: 0,
+      text: 'Preparing model...',
+    };
+  }
+
+  const candidate = progress as {
+    progress?: unknown;
+    text?: unknown;
+    status?: unknown;
+  };
+  const normalizedProgress = normalizeProgressValue(candidate.progress);
+  const rawText = typeof candidate.text === 'string' ? candidate.text : typeof candidate.status === 'string' ? candidate.status : '';
+
+  return {
+    progress: Math.max(0, Math.min(1, normalizedProgress ?? 0)),
+    text: rawText.trim() || (normalizedProgress !== undefined && normalizedProgress >= 1 ? 'Validating model...' : 'Preparing model...'),
+  };
+};
+
+const emitModelProgress = (modelId: string, progress: WebLlmLoadProgress) => {
+  latestModelProgress.set(modelId, progress);
+
+  const listeners = modelProgressListeners.get(modelId);
+
+  if (!listeners) {
+    return;
+  }
+
+  for (const listener of listeners) {
+    listener(progress);
+  }
+};
+
+const addModelProgressListener = (modelId: string, listener?: WebLlmProgressListener) => {
+  if (!listener) {
+    return () => undefined;
+  }
+
+  const listeners = modelProgressListeners.get(modelId) ?? new Set<WebLlmProgressListener>();
+  listeners.add(listener);
+  modelProgressListeners.set(modelId, listeners);
+
+  const latestProgress = latestModelProgress.get(modelId);
+
+  if (latestProgress) {
+    listener(latestProgress);
+  }
+
+  return () => {
+    const activeListeners = modelProgressListeners.get(modelId);
+
+    if (!activeListeners) {
+      return;
+    }
+
+    activeListeners.delete(listener);
+
+    if (activeListeners.size === 0) {
+      modelProgressListeners.delete(modelId);
+    }
+  };
 };
 
 const getWebLlmModule = () => {
@@ -724,14 +814,16 @@ const runWebLlmToolLoop = async ({
   context,
   jsonMode,
   modelId,
+  onModelLoadProgress,
 }: {
   systemPrompt: string;
   userMessage: string;
   context: ResearchToolContext;
   jsonMode: boolean;
   modelId?: string;
+  onModelLoadProgress?: WebLlmProgressListener;
 }) => {
-  const engine = await getEngine(modelId);
+  const engine = await getEngine(modelId, onModelLoadProgress);
   const messages: WebLlmMessage[] = [
     {
       role: 'system',
@@ -799,43 +891,71 @@ const runWebLlmToolLoop = async ({
   throw new Error('WebLLM exceeded tool-call limit without returning a final answer');
 };
 
-const getEngine = async (modelId?: string) => {
+const getEngine = async (modelId?: string, onProgress?: WebLlmProgressListener) => {
   if (!isWebLlmSupported()) {
     throw new Error('WebLLM requires a web build with WebGPU support and EXPO_PUBLIC_ENABLE_WEBLLM=true');
   }
 
   const requestedModel = resolveModelId(modelId);
+  const removeProgressListener = addModelProgressListener(requestedModel, onProgress);
 
   const cachedEngine = engineCache.get(requestedModel);
 
   if (cachedEngine) {
-    return cachedEngine.then((engine) => {
-      loadedModelIds.add(requestedModel);
-      activeModelId = requestedModel;
-      return engine;
-    });
+    return cachedEngine
+      .then((engine) => {
+        loadedModelIds.add(requestedModel);
+        activeModelId = requestedModel;
+        emitModelProgress(requestedModel, {
+          progress: 1,
+          text: 'Model ready',
+        });
+        return engine;
+      })
+      .finally(() => {
+        removeProgressListener();
+      });
   }
 
   const enginePromise = getWebLlmModule()
     .then(async ({ CreateMLCEngine }) => {
+      emitModelProgress(requestedModel, {
+        progress: 0,
+        text: 'Starting model download...',
+      });
+
       const engine = await CreateMLCEngine(requestedModel, {
-        initProgressCallback: () => undefined,
+        initProgressCallback: (progress) => {
+          emitModelProgress(requestedModel, normalizeLoadProgress(progress));
+        },
+      });
+
+      emitModelProgress(requestedModel, {
+        progress: 1,
+        text: 'Validating model...',
       });
 
       loadedModelIds.add(requestedModel);
       activeModelId = requestedModel;
+      emitModelProgress(requestedModel, {
+        progress: 1,
+        text: 'Model ready',
+      });
 
       return engine;
     })
     .catch((error) => {
       engineCache.delete(requestedModel);
       loadedModelIds.delete(requestedModel);
+      latestModelProgress.delete(requestedModel);
       throw error;
     });
 
   engineCache.set(requestedModel, enginePromise);
 
-  return enginePromise;
+  return enginePromise.finally(() => {
+    removeProgressListener();
+  });
 };
 
 export const isWebLlmSupported = () => Platform.OS === 'web' && env.enableWebLlm && hasWebGpuSupport();
@@ -844,9 +964,9 @@ export const getActiveWebLlmModel = () => activeModelId;
 
 export const getLoadedWebLlmModels = () => Array.from(loadedModelIds);
 
-export const preloadWebLlmModel = async (modelId?: string) => {
+export const preloadWebLlmModel = async (modelId?: string, onProgress?: WebLlmProgressListener) => {
   const resolved = resolveModelId(modelId);
-  await getEngine(resolved);
+  await getEngine(resolved, onProgress);
   return resolved;
 };
 
@@ -864,11 +984,13 @@ export const askWebLlmAdvisor = async ({
   context,
   history = [],
   modelId,
+  onModelLoadProgress,
 }: {
   question: string;
   context: ResearchToolContext;
   history?: AdvisorHistoryMessage[];
   modelId?: string;
+  onModelLoadProgress?: WebLlmProgressListener;
 }) =>
   runWebLlmToolLoop({
     systemPrompt: buildAdvisorSystemPrompt(),
@@ -876,4 +998,5 @@ export const askWebLlmAdvisor = async ({
     context,
     jsonMode: false,
     modelId,
+    onModelLoadProgress,
   });

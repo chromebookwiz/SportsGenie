@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -18,6 +17,7 @@ import {
   getLoadedWebLlmModels,
   isWebLlmSupported,
   preloadWebLlmModel,
+  type WebLlmLoadProgress,
   webLlmModelOptions,
 } from '../services/webllm';
 import type { AnalyticsOverview, BettingEvent, NewsArticle, Recommendation } from '../types/sports';
@@ -46,6 +46,13 @@ type PersistedAdvisorState = {
   modelId?: string;
 };
 
+type ModelLoadState = {
+  visible: boolean;
+  progress: number;
+  text: string;
+  tone: 'idle' | 'loading' | 'ready';
+};
+
 const quickPrompts = [
   'What is the cleanest bet on this board right now?',
   'What should I avoid because the evidence is weak?',
@@ -62,7 +69,30 @@ const defaultMessages: ChatMessage[] = [
   },
 ];
 
+const defaultModelLoadState: ModelLoadState = {
+  visible: false,
+  progress: 0,
+  text: '',
+  tone: 'idle',
+};
+
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const getModelStatusLabel = (modelId: string, activeModel: string, loadedModelSet: Set<string>) => {
+  if (activeModel === modelId && loadedModelSet.has(modelId)) {
+    return 'Active';
+  }
+
+  if (loadedModelSet.has(modelId)) {
+    return 'Loaded';
+  }
+
+  if (activeModel === modelId) {
+    return 'Default';
+  }
+
+  return 'Available';
+};
 
 const buildCandidateContext = (recommendations: Recommendation[]) =>
   recommendations.map((recommendation) => ({
@@ -92,12 +122,17 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [selectedModel, setSelectedModel] = useState(getActiveWebLlmModel());
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [modelLoadState, setModelLoadState] = useState<ModelLoadState>(defaultModelLoadState);
   const [activeModel, setActiveModel] = useState(getActiveWebLlmModel());
   const [loadedModels, setLoadedModels] = useState<string[]>(() => getLoadedWebLlmModels());
   const hasPositionRef = useRef(false);
+  const lastViewportRef = useRef<{ width: number; height: number } | null>(null);
   const hydratedRef = useRef(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const dragOriginRef = useRef({ x: 0, y: 0 });
+  const dragPointerOriginRef = useRef({ x: 0, y: 0 });
+  const draggingRef = useRef(false);
 
   const panelWidth = Math.min(Math.max(width * 0.34, 320), 420);
   const panelHeight = Math.min(Math.max(height * 0.5, 420), 620);
@@ -116,6 +151,16 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
     [analytics, events, news, providerSummary, recommendations, selectedSport]
   );
   const loadedModelSet = useMemo(() => new Set(loadedModels), [loadedModels]);
+  const availableModelOptions = useMemo(() => {
+    const nextOptions = new Set(webLlmModelOptions);
+    const trimmedModel = selectedModel.trim();
+
+    if (trimmedModel) {
+      nextOptions.add(trimmedModel);
+    }
+
+    return Array.from(nextOptions);
+  }, [selectedModel]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
@@ -160,24 +205,77 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
   }, []);
 
   useEffect(() => {
+    const nextViewport = { width, height };
+    const maxX = Math.max(8, width - panelWidth - 8);
+    const maxY = Math.max(8, height - panelHeight - 8);
+
     if (!hasPositionRef.current) {
       setPosition({
         x: Math.max(12, width - panelWidth - 18),
         y: Math.max(88, height - panelHeight - 28),
       });
       hasPositionRef.current = true;
+      lastViewportRef.current = nextViewport;
+      return;
+    }
+
+    const previousViewport = lastViewportRef.current;
+    lastViewportRef.current = nextViewport;
+
+    if (!previousViewport) {
+      setPosition((current) => ({
+        x: clamp(current.x, 8, maxX),
+        y: clamp(current.y, 8, maxY),
+      }));
+      return;
+    }
+
+    const viewportShrank = width < previousViewport.width || height < previousViewport.height;
+
+    if (!viewportShrank) {
       return;
     }
 
     setPosition((current) => ({
-      x: clamp(current.x, 8, Math.max(8, width - panelWidth - 8)),
-      y: clamp(current.y, 8, Math.max(8, height - 72)),
+      x: clamp(current.x, 8, maxX),
+      y: clamp(current.y, 8, maxY),
     }));
   }, [height, panelHeight, panelWidth, width]);
 
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (!canDragWindow || typeof window === 'undefined') {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!draggingRef.current) {
+        return;
+      }
+
+      setPosition({
+        x: clamp(dragOriginRef.current.x + (event.pageX - dragPointerOriginRef.current.x), 8, Math.max(8, width - panelWidth - 8)),
+        y: clamp(dragOriginRef.current.y + (event.pageY - dragPointerOriginRef.current.y), 8, Math.max(8, height - panelHeight - 8)),
+      });
+    };
+
+    const stopDragging = () => {
+      draggingRef.current = false;
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopDragging);
+    window.addEventListener('pointercancel', stopDragging);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopDragging);
+      window.removeEventListener('pointercancel', stopDragging);
+    };
+  }, [canDragWindow, height, panelWidth, width]);
 
   useEffect(() => {
     if (!hydratedRef.current || Platform.OS !== 'web' || typeof localStorage === 'undefined') {
@@ -203,43 +301,53 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
 
     setErrorMessage(null);
     setModelLoading(true);
+    setModelLoadState({
+      visible: true,
+      progress: 0,
+      text: 'Starting model download...',
+      tone: 'loading',
+    });
 
     try {
-      await preloadWebLlmModel(trimmedModel);
+      await preloadWebLlmModel(trimmedModel, (progress: WebLlmLoadProgress) => {
+        setModelLoadState({
+          visible: true,
+          progress: progress.progress,
+          text: progress.text,
+          tone: progress.progress >= 1 ? 'ready' : 'loading',
+        });
+      });
       setActiveModel(getActiveWebLlmModel());
       setLoadedModels(getLoadedWebLlmModels());
+      setIsModelMenuOpen(false);
+      setModelLoadState({
+        visible: true,
+        progress: 1,
+        text: 'Model ready',
+        tone: 'ready',
+      });
     } catch (error) {
+      setModelLoadState(defaultModelLoadState);
       setErrorMessage(error instanceof Error ? error.message : 'Model load failed');
     } finally {
       setModelLoading(false);
     }
   };
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => canDragWindow,
-        onMoveShouldSetPanResponder: (_event, gestureState) => canDragWindow && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
-        onStartShouldSetPanResponderCapture: () => canDragWindow,
-        onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
-          canDragWindow && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
-        onPanResponderGrant: () => {
-          dragOriginRef.current = position;
-        },
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderMove: (_event, gestureState) => {
-          if (!canDragWindow) {
-            return;
-          }
+  const startWindowDrag = (event: any) => {
+    if (!canDragWindow) {
+      return;
+    }
 
-          setPosition({
-            x: clamp(dragOriginRef.current.x + gestureState.dx, 8, Math.max(8, width - panelWidth - 8)),
-            y: clamp(dragOriginRef.current.y + gestureState.dy, 8, Math.max(8, height - 72)),
-          });
-        },
-      }),
-    [canDragWindow, height, panelWidth, position, width]
-  );
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    dragOriginRef.current = position;
+    dragPointerOriginRef.current = {
+      x: Number(event?.nativeEvent?.pageX ?? 0),
+      y: Number(event?.nativeEvent?.pageY ?? 0),
+    };
+    draggingRef.current = true;
+  };
 
   const submitQuestion = async (question: string) => {
     const trimmed = question.trim();
@@ -265,6 +373,15 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
     setErrorMessage(null);
     setLoading(true);
 
+    if (!loadedModelSet.has(selectedModel.trim())) {
+      setModelLoadState({
+        visible: true,
+        progress: 0,
+        text: 'Starting model download...',
+        tone: 'loading',
+      });
+    }
+
     try {
       if (!supported) {
         throw new Error('WebLLM advisor is available only on web with EXPO_PUBLIC_ENABLE_WEBLLM=true and WebGPU support.');
@@ -275,10 +392,28 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         context,
         history,
         modelId: selectedModel.trim(),
+        onModelLoadProgress: (progress: WebLlmLoadProgress) => {
+          setModelLoadState({
+            visible: true,
+            progress: progress.progress,
+            text: progress.text,
+            tone: progress.progress >= 1 ? 'ready' : 'loading',
+          });
+        },
       });
 
       setActiveModel(getActiveWebLlmModel());
       setLoadedModels(getLoadedWebLlmModels());
+      setModelLoadState((current) =>
+        current.visible
+          ? {
+              visible: true,
+              progress: 1,
+              text: 'Model ready',
+              tone: 'ready',
+            }
+          : current
+      );
 
       setMessages((current) => [
         ...current,
@@ -289,6 +424,7 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         },
       ]);
     } catch (error) {
+      setModelLoadState(defaultModelLoadState);
       setErrorMessage(error instanceof Error ? error.message : 'Advisor request failed');
     } finally {
       setLoading(false);
@@ -337,15 +473,17 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
       ]}
     >
       <View style={[styles.windowCard, Platform.OS !== 'web' ? { maxHeight: panelHeight } : null]}>
-        <View
-          style={[styles.windowHeader, canDragWindow ? styles.windowHeaderDraggable : null]}
-          {...(canDragWindow ? panResponder.panHandlers : {})}
-        >
+        <View style={[styles.windowHeader, canDragWindow ? styles.windowHeaderDraggable : null]}>
           <View>
             <Text style={styles.windowTitle}>Advisor</Text>
             <Text style={styles.windowSubtitle}>{supported ? 'Local WebLLM with research tools' : 'WebLLM unavailable on this runtime'}</Text>
           </View>
           <View style={styles.windowActions}>
+            {canDragWindow ? (
+              <View style={styles.dragPill} onPointerDown={startWindowDrag}>
+                <Text style={styles.dragPillText}>Drag</Text>
+              </View>
+            ) : null}
             <Pressable style={styles.windowActionButton} onPress={() => setWindowState('minimized')}>
               <Text style={styles.windowActionText}>Min</Text>
             </Pressable>
@@ -361,40 +499,38 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         </View>
 
         <View style={styles.modelRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modelChipRow}>
-            {webLlmModelOptions.map((modelId) => (
-              <Pressable
-                key={modelId}
-                style={[
-                  styles.modelChip,
-                  selectedModel === modelId ? styles.modelChipActive : null,
-                  loadedModelSet.has(modelId) ? styles.modelChipLoaded : null,
-                ]}
-                onPress={() => setSelectedModel(modelId)}
-              >
-                <Text style={[styles.modelChipText, selectedModel === modelId ? styles.modelChipTextActive : null]}>{modelId}</Text>
-                <Text style={[styles.modelChipMetaText, selectedModel === modelId ? styles.modelChipMetaTextActive : null]}>
-                  {activeModel === modelId && loadedModelSet.has(modelId)
-                    ? 'Active'
-                    : loadedModelSet.has(modelId)
-                      ? 'Loaded'
-                      : activeModel === modelId
-                        ? 'Default'
-                        : 'Available'}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
           <View style={styles.modelInputRow}>
-            <TextInput
-              value={selectedModel}
-              onChangeText={setSelectedModel}
-              placeholder="Model ID"
-              placeholderTextColor="#7F786D"
-              style={styles.modelInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            <View style={styles.modelDropdownWrap}>
+              <Pressable style={styles.modelDropdownButton} onPress={() => setIsModelMenuOpen((current) => !current)}>
+                <View style={styles.modelDropdownTextWrap}>
+                  <Text numberOfLines={1} style={styles.modelDropdownLabel}>{selectedModel}</Text>
+                  <Text style={styles.modelDropdownMeta}>{getModelStatusLabel(selectedModel, activeModel, loadedModelSet)}</Text>
+                </View>
+                <Text style={styles.modelDropdownChevron}>{isModelMenuOpen ? '▲' : '▼'}</Text>
+              </Pressable>
+              {isModelMenuOpen ? (
+                <ScrollView style={styles.modelDropdownMenu} nestedScrollEnabled>
+                  {availableModelOptions.map((modelId) => (
+                    <Pressable
+                      key={modelId}
+                      style={[
+                        styles.modelOption,
+                        selectedModel === modelId ? styles.modelOptionActive : null,
+                      ]}
+                      onPress={() => {
+                        setSelectedModel(modelId);
+                        setIsModelMenuOpen(false);
+                      }}
+                    >
+                      <Text style={[styles.modelOptionText, selectedModel === modelId ? styles.modelOptionTextActive : null]}>{modelId}</Text>
+                      <Text style={[styles.modelOptionMetaText, selectedModel === modelId ? styles.modelOptionMetaTextActive : null]}>
+                        {getModelStatusLabel(modelId, activeModel, loadedModelSet)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </View>
             <Pressable
               style={[styles.loadButton, modelLoading ? styles.loadButtonDisabled : null]}
               onPress={() => void loadSelectedModel()}
@@ -404,6 +540,23 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
               </Text>
             </Pressable>
           </View>
+          {modelLoadState.visible ? (
+            <View style={styles.progressWrap}>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    modelLoadState.tone === 'ready' ? styles.progressFillReady : null,
+                    { width: `${Math.max(6, Math.min(100, Math.round(modelLoadState.progress * 100)))}%` },
+                  ]}
+                />
+              </View>
+              <View style={styles.progressMetaRow}>
+                <Text style={styles.progressText}>{modelLoadState.text}</Text>
+                <Text style={styles.progressPercent}>{Math.round(modelLoadState.progress * 100)}%</Text>
+              </View>
+            </View>
+          ) : null}
           <Text style={styles.modelMetaText}>
             {loadedModelSet.has(activeModel) ? `Active model: ${activeModel}` : `Default model: ${activeModel}`}
           </Text>
@@ -561,64 +714,91 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E4DDD2',
   },
-  modelChipRow: {
-    gap: 8,
-    paddingRight: 10,
-  },
-  modelChip: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#D1CAC0',
-    backgroundColor: '#F3EEE4',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 2,
-  },
-  modelChipActive: {
-    borderColor: '#111111',
-    backgroundColor: '#111111',
-  },
-  modelChipLoaded: {
-    borderColor: '#857B6D',
-  },
-  modelChipText: {
-    color: '#2B2925',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  modelChipTextActive: {
-    color: '#F5F1E8',
-  },
-  modelChipMetaText: {
-    color: '#6E675D',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  modelChipMetaTextActive: {
-    color: '#BFB6A9',
-  },
   modelInputRow: {
     flexDirection: 'row',
     gap: 8,
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
-  modelInput: {
+  modelDropdownWrap: {
     flex: 1,
+    gap: 6,
+  },
+  modelDropdownButton: {
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#CFC8BC',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
     paddingVertical: 10,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  modelDropdownTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  modelDropdownLabel: {
     color: '#111111',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modelDropdownMeta: {
+    color: '#625C52',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  modelDropdownChevron: {
+    color: '#625C52',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  modelDropdownMenu: {
+    maxHeight: 180,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D1CAC0',
+    backgroundColor: '#FFFFFF',
+  },
+  modelOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEE7DB',
+  },
+  modelOptionActive: {
+    backgroundColor: '#111111',
+  },
+  modelOptionText: {
+    color: '#2B2925',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modelOptionTextActive: {
+    color: '#F5F1E8',
+  },
+  modelOptionMetaText: {
+    color: '#6E675D',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  modelOptionMetaTextActive: {
+    color: '#BFB6A9',
   },
   loadButton: {
     borderRadius: 16,
     backgroundColor: '#111111',
     paddingHorizontal: 12,
     paddingVertical: 10,
+    minHeight: 48,
+    justifyContent: 'center',
   },
   loadButtonDisabled: {
     opacity: 0.5,
@@ -630,6 +810,39 @@ const styles = StyleSheet.create({
   modelMetaText: {
     color: '#625C52',
     fontSize: 12,
+  },
+  progressWrap: {
+    gap: 6,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#E7E0D5',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#111111',
+  },
+  progressFillReady: {
+    backgroundColor: '#365F48',
+  },
+  progressMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  progressText: {
+    flex: 1,
+    color: '#625C52',
+    fontSize: 12,
+  },
+  progressPercent: {
+    color: '#111111',
+    fontSize: 12,
+    fontWeight: '700',
   },
   quickPromptRow: {
     flexDirection: 'row',
