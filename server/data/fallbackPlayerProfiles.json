@@ -1,0 +1,54 @@
+[
+  {
+    "id": "nba-tatum",
+    "name": "Jayson Tatum",
+    "team": "Boston Celtics",
+    "sportKey": "basketball_nba",
+    "position": "F",
+    "primaryStatLabel": "Points",
+    "recentGames": [
+      { "date": "2026-03-11", "opponent": "Heat", "home": true, "minutes": 36, "primaryStat": 31, "secondaryStat": 9, "tertiaryStat": 5, "usageRate": 32 },
+      { "date": "2026-03-09", "opponent": "Knicks", "home": false, "minutes": 37, "primaryStat": 28, "secondaryStat": 8, "tertiaryStat": 6, "usageRate": 31 },
+      { "date": "2026-03-07", "opponent": "Cavaliers", "home": true, "minutes": 35, "primaryStat": 34, "secondaryStat": 10, "tertiaryStat": 4, "usageRate": 34 }
+    ]
+  },
+  {
+    "id": "nba-giannis",
+    "name": "Giannis Antetokounmpo",
+    "team": "Milwaukee Bucks",
+    "sportKey": "basketball_nba",
+    "position": "F/C",
+    "primaryStatLabel": "Points",
+    "recentGames": [
+      { "date": "2026-03-10", "opponent": "Bulls", "home": true, "minutes": 36, "primaryStat": 33, "secondaryStat": 12, "tertiaryStat": 6, "usageRate": 35 },
+      { "date": "2026-03-08", "opponent": "Pacers", "home": false, "minutes": 35, "primaryStat": 30, "secondaryStat": 11, "tertiaryStat": 7, "usageRate": 34 },
+      { "date": "2026-03-06", "opponent": "Hawks", "home": true, "minutes": 34, "primaryStat": 35, "secondaryStat": 10, "tertiaryStat": 5, "usageRate": 36 }
+    ]
+  },
+  {
+    "id": "nhl-matthews",
+    "name": "Auston Matthews",
+    "team": "Toronto Maple Leafs",
+    "sportKey": "icehockey_nhl",
+    "position": "C",
+    "primaryStatLabel": "Goals",
+    "recentGames": [
+      { "date": "2026-03-11", "opponent": "Canadiens", "home": true, "minutes": 22, "primaryStat": 2, "secondaryStat": 0, "tertiaryStat": 6, "usageRate": 31 },
+      { "date": "2026-03-09", "opponent": "Bruins", "home": false, "minutes": 21, "primaryStat": 1, "secondaryStat": 0, "tertiaryStat": 5, "usageRate": 29 },
+      { "date": "2026-03-07", "opponent": "Sabres", "home": true, "minutes": 22, "primaryStat": 2, "secondaryStat": 1, "tertiaryStat": 7, "usageRate": 32 }
+    ]
+  },
+  {
+    "id": "soccer-salah",
+    "name": "Mohamed Salah",
+    "team": "Liverpool",
+    "sportKey": "soccer_epl",
+    "position": "W",
+    "primaryStatLabel": "Goal contributions",
+    "recentGames": [
+      { "date": "2026-03-08", "opponent": "Everton", "home": true, "minutes": 90, "primaryStat": 2, "secondaryStat": 0, "tertiaryStat": 5, "usageRate": 31 },
+      { "date": "2026-03-01", "opponent": "Brighton", "home": false, "minutes": 88, "primaryStat": 1, "secondaryStat": 1, "tertiaryStat": 4, "usageRate": 30 },
+      { "date": "2026-02-24", "opponent": "Wolves", "home": true, "minutes": 90, "primaryStat": 2, "secondaryStat": 1, "tertiaryStat": 6, "usageRate": 32 }
+    ]
+  }
+]

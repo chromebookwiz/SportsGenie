@@ -1,0 +1,740 @@
+import { env, recommendationSystemPrompt } from '../config/env';
+import type { AnalyticsOverview, BettingEvent, NewsArticle, ProviderResult, Recommendation, SportsbookOutcome } from '../types/sports';
+import {
+  americanToImpliedProbability,
+  clamp,
+  expectedValue as calculateExpectedValue,
+  kellyFraction as calculateKellyFraction,
+  monteCarloWinRate,
+  normalCdf,
+  normalizedProbabilities,
+  standardDeviation,
+  zScore,
+} from './quant';
+
+type CandidateBet = {
+  id: string;
+  matchup: string;
+  market: string;
+  selection: string;
+  sportsbook: string;
+  odds: number;
+  point?: number | null;
+  score: number;
+  confidence: number;
+  rationale: string;
+  relatedHeadline?: string;
+  bookmakerCount: number;
+  marketHold: number;
+  lineValue: number;
+  startsInHours: number;
+  edgePercent: number;
+  modelDelta: number;
+  supportingPlayers: string[];
+  modelSummary: string;
+  parlayEligible: boolean;
+  impliedProbability: number;
+  fairProbability: number;
+  expectedValue: number;
+  kellyFraction: number;
+  simulatedWinRate: number;
+};
+
+type LlmResponse = {
+  recommendations?: Array<{
+    rank?: number;
+    matchup?: string;
+    market?: string;
+    selection?: string;
+    sportsbook?: string;
+    odds?: number;
+    confidence?: number;
+    score?: number;
+    rationale?: string;
+    relatedHeadline?: string;
+  }>;
+};
+
+const marketPriority: Record<string, number> = {
+  h2h: 3,
+  spreads: 2.6,
+  totals: 2.4,
+};
+
+const MAX_ABSOLUTE_FAVORITE_PRICE = 180;
+const MAX_LONGSHOT_PRICE = 325;
+const MAX_MARKET_HOLD = 0.12;
+const MIN_LINE_VALUE = 0.012;
+const MAX_EVENT_WINDOW_HOURS = 48;
+
+const candidateLabel = (outcome: SportsbookOutcome) => {
+  if (typeof outcome.point === 'number') {
+    return `${outcome.name} ${outcome.point > 0 ? '+' : ''}${outcome.point}`;
+  }
+
+  return outcome.name;
+};
+
+const sameOutcome = (left: SportsbookOutcome, right: SportsbookOutcome) =>
+  left.name === right.name && (left.point ?? null) === (right.point ?? null);
+
+const findRelatedHeadline = (event: BettingEvent, news: NewsArticle[]) => {
+  const haystacks = [event.homeTeam.toLowerCase(), event.awayTeam.toLowerCase(), event.sportTitle.toLowerCase()];
+
+  return news.find((article) => {
+    const blob = `${article.title} ${article.description}`.toLowerCase();
+
+    return haystacks.some((needle) => blob.includes(needle));
+  });
+};
+
+const buildOutcomeKey = (eventId: string, marketKey: string, outcome: SportsbookOutcome) =>
+  `${eventId}:${marketKey}:${outcome.name}:${outcome.point ?? 'na'}`;
+
+const startsInHours = (commenceTime: string) => (new Date(commenceTime).getTime() - Date.now()) / (1000 * 60 * 60);
+
+const isPriceInRange = (odds: number) => odds >= -MAX_ABSOLUTE_FAVORITE_PRICE && odds <= MAX_LONGSHOT_PRICE;
+
+const buildMarketSnapshot = (event: BettingEvent) => {
+  const snapshot = new Map<string, SportsbookOutcome[]>();
+
+  for (const bookmaker of event.bookmakers) {
+    for (const market of bookmaker.markets) {
+      const marketKey = `${event.id}:${market.key}`;
+      const outcomes = snapshot.get(marketKey) ?? [];
+      outcomes.push(...market.outcomes);
+      snapshot.set(marketKey, outcomes);
+    }
+  }
+
+  return snapshot;
+};
+
+const calculateMarketHold = (outcomes: SportsbookOutcome[]) => {
+  if (outcomes.length < 2) {
+    return 0;
+  }
+
+  return outcomes.reduce((sum, outcome) => sum + americanToImpliedProbability(outcome.price), 0) - 1;
+};
+
+const buildConsensusFairProbability = (event: BettingEvent, marketKey: string, targetOutcome: SportsbookOutcome) => {
+  const probabilities = event.bookmakers
+    .flatMap((bookmaker) => bookmaker.markets.filter((market) => market.key === marketKey))
+    .map((market) => {
+      const normalized = normalizedProbabilities(market.outcomes.map((outcome) => outcome.price));
+      const outcomeIndex = market.outcomes.findIndex((outcome) => sameOutcome(outcome, targetOutcome));
+
+      return outcomeIndex >= 0 ? normalized[outcomeIndex] : null;
+    })
+    .filter((value): value is number => typeof value === 'number');
+
+  if (probabilities.length === 0) {
+    return null;
+  }
+
+  return probabilities.reduce((sum, value) => sum + value, 0) / probabilities.length;
+};
+
+const buildModelProbability = (
+  event: BettingEvent,
+  marketKey: string,
+  outcome: SportsbookOutcome,
+  analytics: AnalyticsOverview
+) => {
+  const model = getEventModel(analytics, `${event.awayTeam} at ${event.homeTeam}`);
+
+  if (!model) {
+    return 0.5;
+  }
+
+  if (marketKey === 'h2h') {
+    if (outcome.name === event.homeTeam) {
+      return model.homeWinProbability;
+    }
+
+    if (outcome.name === event.awayTeam) {
+      return model.awayWinProbability;
+    }
+
+    return model.drawProbability || 0.14;
+  }
+
+  if (marketKey === 'spreads' && typeof outcome.point === 'number') {
+    if (outcome.name === event.homeTeam) {
+      return 1 - normalCdf(-outcome.point, model.expectedMargin, model.marginStdDev);
+    }
+
+    return normalCdf(outcome.point, model.expectedMargin, model.marginStdDev);
+  }
+
+  if (marketKey === 'totals' && typeof outcome.point === 'number') {
+    if (outcome.name.toLowerCase() === 'over') {
+      return 1 - normalCdf(outcome.point, model.totalProjection, model.totalStdDev);
+    }
+
+    return normalCdf(outcome.point, model.totalProjection, model.totalStdDev);
+  }
+
+  return 0.5;
+};
+
+const buildSimulatedProbability = (
+  event: BettingEvent,
+  marketKey: string,
+  outcome: SportsbookOutcome,
+  analytics: AnalyticsOverview
+) => {
+  const model = getEventModel(analytics, `${event.awayTeam} at ${event.homeTeam}`);
+
+  if (!model) {
+    return 0.5;
+  }
+
+  if (marketKey === 'h2h') {
+    if (outcome.name === event.homeTeam) {
+      return monteCarloWinRate({
+        seed: `${event.id}:h2h:home`,
+        iterations: 450,
+        meanValue: model.expectedMargin,
+        stdDev: model.marginStdDev,
+        comparator: (sample) => sample > 0,
+      });
+    }
+
+    if (outcome.name === event.awayTeam) {
+      return monteCarloWinRate({
+        seed: `${event.id}:h2h:away`,
+        iterations: 450,
+        meanValue: model.expectedMargin,
+        stdDev: model.marginStdDev,
+        comparator: (sample) => sample < 0,
+      });
+    }
+
+    return model.drawProbability || 0.14;
+  }
+
+  if (marketKey === 'spreads' && typeof outcome.point === 'number') {
+    const line = outcome.point;
+
+    if (outcome.name === event.homeTeam) {
+      return monteCarloWinRate({
+        seed: `${event.id}:spread:home:${outcome.point}`,
+        iterations: 450,
+        meanValue: model.expectedMargin,
+        stdDev: model.marginStdDev,
+        comparator: (sample) => sample + line > 0,
+      });
+    }
+
+    return monteCarloWinRate({
+      seed: `${event.id}:spread:away:${outcome.point}`,
+      iterations: 450,
+      meanValue: model.expectedMargin,
+      stdDev: model.marginStdDev,
+      comparator: (sample) => sample < line,
+    });
+  }
+
+  if (marketKey === 'totals' && typeof outcome.point === 'number') {
+    const line = outcome.point;
+
+    return monteCarloWinRate({
+      seed: `${event.id}:total:${outcome.name}:${outcome.point}`,
+      iterations: 450,
+      meanValue: model.totalProjection,
+      stdDev: model.totalStdDev,
+      comparator: (sample) => (outcome.name.toLowerCase() === 'over' ? sample > line : sample < line),
+    });
+  }
+
+  return 0.5;
+};
+
+const buildPrefilterReason = (candidate: CandidateBet) => {
+  if (candidate.bookmakerCount < 2) {
+    return 'Only one book posted this exact selection.';
+  }
+
+  if (!isPriceInRange(candidate.odds)) {
+    return 'Price sits in a poor risk-reward range.';
+  }
+
+  if (candidate.marketHold > MAX_MARKET_HOLD) {
+    return 'Market vig is too high.';
+  }
+
+  if (candidate.lineValue < MIN_LINE_VALUE) {
+    return 'Best line does not separate enough from the market consensus.';
+  }
+
+  if (candidate.edgePercent < 0.015) {
+    return 'Quant edge is too small.';
+  }
+
+  if (candidate.expectedValue < 0.025) {
+    return 'Expected value is too weak.';
+  }
+
+  if (candidate.kellyFraction < 0.003) {
+    return 'Kelly stake is too small to justify the risk.';
+  }
+
+  if (candidate.startsInHours <= 0 || candidate.startsInHours > MAX_EVENT_WINDOW_HOURS) {
+    return 'Event timing is outside the target recommendation window.';
+  }
+
+  return null;
+};
+
+const getEventModel = (analytics: AnalyticsOverview, matchup: string) =>
+  analytics.eventModels.find((model) => model.matchup === matchup);
+
+const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics: AnalyticsOverview): CandidateBet[] => {
+  const grouped = new Map<string, CandidateBet[]>();
+
+  for (const event of events) {
+    const relatedHeadline = findRelatedHeadline(event, news)?.title;
+    const matchup = `${event.awayTeam} at ${event.homeTeam}`;
+    const eventStartsInHours = startsInHours(event.commenceTime);
+    const model = getEventModel(analytics, matchup);
+    const margin = model?.expectedMargin ?? 0;
+    const supportingPlayers = model
+      ? [...model.homeTeam.playerProjections, ...model.awayTeam.playerProjections]
+          .sort((left, right) => right.confidence - left.confidence)
+          .slice(0, 3)
+          .map((projection) => `${projection.playerName} ${projection.trendLabel}`)
+      : [];
+    const totalTarget = model?.totalProjection ?? 0;
+
+    for (const bookmaker of event.bookmakers) {
+      for (const market of bookmaker.markets) {
+        for (const outcome of market.outcomes) {
+          const key = buildOutcomeKey(event.id, market.key, outcome);
+          const eventStartsSoon = eventStartsInHours < 36;
+          const baseScore = marketPriority[market.key] ?? 1.8;
+          const newsBonus = relatedHeadline ? 0.45 : 0;
+          const timingBonus = eventStartsSoon ? 0.4 : 0.1;
+          const marketModelFit =
+            market.key === 'spreads'
+              ? Math.abs(margin) / 6
+              : market.key === 'totals' && typeof outcome.point === 'number'
+                ? Math.abs(totalTarget - outcome.point) / Math.max(8, totalTarget || 1)
+                : market.key === 'h2h'
+                  ? Math.abs(margin) / 8
+                  : 0.14;
+          const modelDelta = Number(marketModelFit.toFixed(3));
+
+          const candidate: CandidateBet = {
+            id: key,
+            matchup,
+            market: market.key,
+            selection: candidateLabel(outcome),
+            sportsbook: bookmaker.title,
+            odds: outcome.price,
+            point: outcome.point,
+            score: baseScore + newsBonus + timingBonus,
+            confidence: 58,
+            rationale: '',
+            relatedHeadline,
+            bookmakerCount: 1,
+            marketHold: 0,
+            lineValue: 0,
+            startsInHours: eventStartsInHours,
+            edgePercent: 0,
+            modelDelta,
+            supportingPlayers,
+            modelSummary: model
+              ? `${model.homeTeam.team} vs ${model.awayTeam.team} projects ${margin > 0 ? `${model.homeTeam.team} +${margin.toFixed(1)}` : `${model.awayTeam.team} +${Math.abs(margin).toFixed(1)}`}.`
+              : 'No regression model available for this event.',
+            parlayEligible: market.key !== 'spreads' || Math.abs(margin) >= 1.5,
+            impliedProbability: 0,
+            fairProbability: 0,
+            expectedValue: 0,
+            kellyFraction: 0,
+            simulatedWinRate: 0,
+          };
+
+          const existing = grouped.get(key) ?? [];
+          existing.push(candidate);
+          grouped.set(key, existing);
+        }
+      }
+    }
+  }
+
+  const pricedCandidates = events.flatMap((event) => {
+    const marketSnapshot = buildMarketSnapshot(event);
+
+    return Array.from(grouped.entries())
+      .filter(([key]) => key.startsWith(`${event.id}:`))
+      .map(([, candidates]) => {
+    const best = candidates.reduce((currentBest, candidate) => (candidate.odds > currentBest.odds ? candidate : currentBest));
+    const consensusFairProbability = buildConsensusFairProbability(event, best.market, {
+      name: best.selection.replace(/\s[+-]?\d+(\.\d+)?$/, ''),
+      price: best.odds,
+      point: best.point,
+    });
+    const bestImplied = americanToImpliedProbability(best.odds);
+    const lineValue = Math.max((consensusFairProbability ?? bestImplied) - bestImplied, 0);
+    const marketOutcomes = marketSnapshot.get(`${event.id}:${best.market}`) ?? [];
+    const marketHold = calculateMarketHold(marketOutcomes);
+    const eventOutcome: SportsbookOutcome = {
+      name: best.selection.replace(/\s[+-]?\d+(\.\d+)?$/, ''),
+      price: best.odds,
+      point: best.point,
+    };
+    const analyticalProbability = buildModelProbability(event, best.market, eventOutcome, analytics);
+    const simulatedWinRate = buildSimulatedProbability(event, best.market, eventOutcome, analytics);
+    const fairProbability = Number(
+      clamp(simulatedWinRate * 0.5 + analyticalProbability * 0.35 + (consensusFairProbability ?? bestImplied) * 0.15, 0.05, 0.95).toFixed(3)
+    );
+    const expectedValue = Number(calculateExpectedValue(fairProbability, best.odds).toFixed(3));
+    const kellyFraction = Number(calculateKellyFraction(fairProbability, best.odds).toFixed(3));
+    const edgePercent = Number(clamp(fairProbability - bestImplied, 0, 0.22).toFixed(3));
+    const confidence = Math.min(
+      95,
+      Math.round(54 + edgePercent * 170 + expectedValue * 120 + best.modelDelta * 35 + kellyFraction * 120)
+    );
+    const score = Number((best.score + expectedValue * 24 + edgePercent * 18 + kellyFraction * 30 - marketHold * 5).toFixed(2));
+
+    return {
+      ...best,
+      score,
+      confidence,
+      bookmakerCount: candidates.length,
+      marketHold,
+      lineValue,
+      edgePercent,
+      impliedProbability: bestImplied,
+      fairProbability,
+      expectedValue,
+      kellyFraction,
+      simulatedWinRate: Number(simulatedWinRate.toFixed(3)),
+      rationale: best.relatedHeadline
+        ? `Best available price beats the consensus number across books and aligns with the latest news signal: ${best.relatedHeadline}`
+        : 'Best available price beats the consensus number across books and rates well in a high-liquidity market.',
+    };
+      });
+  });
+
+  const evAverage = pricedCandidates.reduce((sum, candidate) => sum + candidate.expectedValue, 0) / Math.max(pricedCandidates.length, 1);
+  const evStdDev = standardDeviation(pricedCandidates.map((candidate) => candidate.expectedValue));
+
+  return pricedCandidates.map((candidate) => ({
+    ...candidate,
+    score: Number((candidate.score + zScore(candidate.expectedValue, evAverage, evStdDev) * 1.8).toFixed(2)),
+  }));
+};
+
+const prefilterCandidates = (candidates: CandidateBet[]) => {
+  const passed = candidates.filter((candidate) => buildPrefilterReason(candidate) === null);
+
+  if (passed.length >= 5) {
+    return passed;
+  }
+
+  // If strict filtering leaves too little inventory, backfill with the least-bad candidates.
+  const fallback = [...candidates]
+    .map((candidate) => ({
+      candidate,
+      rejection: buildPrefilterReason(candidate),
+    }))
+    .sort((left, right) => {
+      if (left.rejection === null && right.rejection !== null) {
+        return -1;
+      }
+
+      if (left.rejection !== null && right.rejection === null) {
+        return 1;
+      }
+
+      return right.candidate.score - left.candidate.score;
+    })
+    .map((entry) => entry.candidate);
+
+  return fallback.slice(0, Math.max(5, passed.length));
+};
+
+const toRecommendations = (candidates: CandidateBet[]): Recommendation[] =>
+  candidates.slice(0, 5).map((candidate, index) => ({
+    id: candidate.id,
+    rank: index + 1,
+    matchup: candidate.matchup,
+    market: candidate.market,
+    selection: candidate.selection,
+    sportsbook: candidate.sportsbook,
+    odds: candidate.odds,
+    confidence: candidate.confidence,
+    score: candidate.score,
+    rationale: `${candidate.rationale} Screened across ${candidate.bookmakerCount} books with ${(candidate.marketHold * 100).toFixed(1)}% market hold.`,
+    relatedHeadline: candidate.relatedHeadline,
+    edgePercent: candidate.edgePercent,
+    riskLabel: candidate.kellyFraction >= 0.03 && candidate.simulatedWinRate >= 0.56 ? 'low' : candidate.expectedValue >= 0.04 ? 'medium' : 'high',
+    modelSummary: candidate.modelSummary,
+    supportingPlayers: candidate.supportingPlayers,
+    parlayEligible: candidate.parlayEligible,
+    impliedProbability: candidate.impliedProbability,
+    fairProbability: candidate.fairProbability,
+    expectedValue: candidate.expectedValue,
+    kellyFraction: candidate.kellyFraction,
+    simulatedWinRate: candidate.simulatedWinRate,
+  }));
+
+const parseJson = (content: string): LlmResponse | null => {
+  try {
+    return JSON.parse(content) as LlmResponse;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeLlmRecommendations = (payload: LlmResponse): Recommendation[] =>
+  (payload.recommendations ?? [])
+    .slice(0, 5)
+    .map((item, index) => ({
+      id: `${item.matchup ?? 'bet'}-${item.market ?? 'market'}-${index}`,
+      rank: item.rank ?? index + 1,
+      matchup: item.matchup ?? 'Unknown matchup',
+      market: item.market ?? 'h2h',
+      selection: item.selection ?? 'Unavailable selection',
+      sportsbook: item.sportsbook ?? 'Best available',
+      odds: item.odds ?? -110,
+      confidence: item.confidence ?? 65,
+      score: item.score ?? 6.5,
+      rationale: item.rationale ?? 'LLM recommendation returned without explanation.',
+      relatedHeadline: item.relatedHeadline,
+    }))
+    .sort((left, right) => left.rank - right.rank);
+
+const callProxy = async (
+  events: BettingEvent[],
+  news: NewsArticle[],
+  analytics: AnalyticsOverview,
+  candidates: CandidateBet[]
+) => {
+  const response = await fetch(env.llmProxyUrl ?? '', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      systemPrompt: recommendationSystemPrompt,
+      events,
+      news,
+      analytics,
+      candidates: candidates.slice(0, 20),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`LLM proxy returned ${response.status}`);
+  }
+
+  return (await response.json()) as LlmResponse;
+};
+
+const callOpenAi = async (
+  events: BettingEvent[],
+  news: NewsArticle[],
+  analytics: AnalyticsOverview,
+  candidates: CandidateBet[]
+) => {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.openAiApiKey}`,
+    },
+    body: JSON.stringify({
+      model: env.openAiModel,
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: recommendationSystemPrompt,
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            events,
+            news,
+            analytics,
+            candidates: candidates.slice(0, 20),
+          }),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI returned ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string;
+      };
+    }>;
+  };
+
+  const content = payload.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error('OpenAI returned no content');
+  }
+
+  const parsed = parseJson(content);
+
+  if (!parsed) {
+    throw new Error('OpenAI returned invalid JSON');
+  }
+
+  return parsed;
+};
+
+const callOpenRouter = async (
+  events: BettingEvent[],
+  news: NewsArticle[],
+  analytics: AnalyticsOverview,
+  candidates: CandidateBet[]
+) => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${env.openRouterApiKey}`,
+  };
+
+  if (env.openRouterSiteUrl) {
+    headers['HTTP-Referer'] = env.openRouterSiteUrl;
+  }
+
+  if (env.openRouterAppName) {
+    headers['X-Title'] = env.openRouterAppName;
+  }
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: env.openRouterModel,
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: recommendationSystemPrompt,
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            events,
+            news,
+            analytics,
+            candidates: candidates.slice(0, 20),
+          }),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenRouter returned ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string;
+      };
+    }>;
+  };
+
+  const content = payload.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error('OpenRouter returned no content');
+  }
+
+  const parsed = parseJson(content);
+
+  if (!parsed) {
+    throw new Error('OpenRouter returned invalid JSON');
+  }
+
+  return parsed;
+};
+
+export async function generateRecommendations(
+  events: BettingEvent[],
+  news: NewsArticle[],
+  analytics: AnalyticsOverview
+): Promise<ProviderResult<Recommendation[]>> {
+  const heuristicCandidates = prefilterCandidates(buildCandidates(events, news, analytics)).sort((left, right) => right.score - left.score);
+  const heuristicRecommendations = toRecommendations(heuristicCandidates);
+  const llmCandidates = heuristicCandidates.slice(0, 12);
+
+  if (env.llmProxyUrl) {
+    try {
+      const payload = await callProxy(events, news, analytics, llmCandidates);
+      const recommendations = normalizeLlmRecommendations(payload);
+
+      if (recommendations.length > 0) {
+        return {
+          data: recommendations,
+          provider: `Live LLM proxy on top of quant engine (${llmCandidates.length} screened bets sent)`,
+        };
+      }
+    } catch {
+      return {
+        data: heuristicRecommendations,
+        provider: `Deterministic quant engine (${llmCandidates.length} screened bets, LLM unavailable)`,
+      };
+    }
+  }
+
+  if (env.openRouterApiKey) {
+    try {
+      const payload = await callOpenRouter(events, news, analytics, llmCandidates);
+      const recommendations = normalizeLlmRecommendations(payload);
+
+      if (recommendations.length > 0) {
+        return {
+          data: recommendations,
+          provider: `Live OpenRouter on top of quant engine (${llmCandidates.length} screened bets sent)`,
+        };
+      }
+    } catch {
+      return {
+        data: heuristicRecommendations,
+        provider: `Deterministic quant engine (${llmCandidates.length} screened bets, LLM unavailable)`,
+      };
+    }
+  }
+
+  if (env.openAiApiKey) {
+    try {
+      const payload = await callOpenAi(events, news, analytics, llmCandidates);
+      const recommendations = normalizeLlmRecommendations(payload);
+
+      if (recommendations.length > 0) {
+        return {
+          data: recommendations,
+          provider: `Live OpenAI on top of quant engine (${llmCandidates.length} screened bets sent)`,
+        };
+      }
+    } catch {
+      return {
+        data: heuristicRecommendations,
+        provider: `Deterministic quant engine (${llmCandidates.length} screened bets, LLM unavailable)`,
+      };
+    }
+  }
+
+  return {
+    data: heuristicRecommendations,
+    provider: `Deterministic quant engine (${llmCandidates.length} screened bets)`,
+  };
+}
