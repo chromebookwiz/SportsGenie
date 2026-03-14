@@ -9,6 +9,8 @@ The Expo SDK 54 setup remains in the repo, but the primary deployment target is 
 - Pulls current odds from The Odds API when `EXPO_PUBLIC_ODDS_API_KEY` is set.
 - Pulls player-performance profiles through a secure proxy at `EXPO_PUBLIC_PROXY_BASE_URL`, using TheSportsDB's free public API by default and falling back to embedded histories when the proxy is unavailable.
 - Pulls current headlines from one or more news providers:
+  - Google News RSS scrape and parse with no API key required
+  - ESPN RSS scrape and parse with no API key required
   - NewsAPI with `EXPO_PUBLIC_NEWS_API_KEY`
   - GNews with `EXPO_PUBLIC_GNEWS_API_KEY`
   - Currents with `EXPO_PUBLIC_CURRENTS_API_KEY`
@@ -25,7 +27,7 @@ The Expo SDK 54 setup remains in the repo, but the primary deployment target is 
 - Prices bets with a combination of regression outputs, consensus math, Monte Carlo win rates, expected value, z-score ranking, and Kelly sizing.
 - Surfaces a regression watchlist, model pulse cards, and player-trend summaries directly on the home screen.
 - Builds low-correlation parlay suggestions from the strongest screened single-bet recommendations using joint EV, Kelly, and pairwise correlation penalties.
-- Displays a responsive dashboard with provider status, top 5 bets, the news feed, and all tracked lines.
+- Displays a responsive dashboard with provider status, a larger ranked prediction board, the news feed, and all tracked lines.
 - Adds responsive layouts, sport filters, haptic feedback where available, and tap-to-open news cards so the app feels good on desktop and mobile web.
 - Supports Expo web for quick browser-based testing with `npm run web` and static web export with `npm run web:build`.
 - Includes both a lightweight Express proxy in `server/` and Vercel serverless API routes in `api/` for secure OpenRouter calls and server-side player-stats aggregation.
@@ -39,6 +41,8 @@ Copy `.env.server.example` to `.env.server` for the server-side API layer.
 The proxy defaults to `PLAYER_STATS_SOURCE=thesportsdb` with the free public key `123`, so you do not need to buy or register for a player-data provider just to get started.
 
 On Vercel, add the same variables from `.env.example` and `.env.server.example` in the project settings. For web deployments, the client now defaults to relative `/api` calls, so you do not need to hardcode `EXPO_PUBLIC_PROXY_BASE_URL` just to use the co-deployed Vercel functions.
+
+If you do nothing else, the app will now try Google News RSS and ESPN RSS first, which keeps the headline feed live without requiring paid news API keys.
 
 ### Recommended production shape
 

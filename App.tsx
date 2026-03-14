@@ -32,7 +32,7 @@ type SectionMode = 'all' | 'picks' | 'news' | 'lines' | 'model';
 
 const sectionModes: Array<{ key: SectionMode; label: string }> = [
   { key: 'all', label: 'Everything' },
-  { key: 'picks', label: 'Top Bets' },
+  { key: 'picks', label: 'Predictions' },
   { key: 'model', label: 'Quant Lab' },
   { key: 'news', label: 'Newswire' },
   { key: 'lines', label: 'Lines' },
@@ -350,8 +350,8 @@ export default function App() {
   const renderRecommendations = () => (
     <View style={styles.sectionBlock}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Top 5 bets right now</Text>
-        <Text style={styles.sectionSubtitle}>Ranked by best available price, market quality, and recommendation engine confidence.</Text>
+        <Text style={styles.sectionTitle}>Live predictions board</Text>
+        <Text style={styles.sectionSubtitle}>Ranked by best available price, market quality, and recommendation engine confidence across the full screened slate.</Text>
       </View>
       {filteredRecommendations.map((recommendation) => (
         <RecommendationCard key={recommendation.id} recommendation={recommendation} compact={isTablet} />
@@ -477,7 +477,7 @@ export default function App() {
               </Pressable>
               <View style={styles.snapshotCard}>
                 <Text style={styles.snapshotValue}>{recommendationCount}</Text>
-                <Text style={styles.snapshotLabel}>Top bets</Text>
+                <Text style={styles.snapshotLabel}>Predictions</Text>
               </View>
               <View style={styles.snapshotCard}>
                 <Text style={styles.snapshotValue}>{betCount}</Text>

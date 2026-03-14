@@ -66,6 +66,7 @@ const MAX_LONGSHOT_PRICE = 325;
 const MAX_MARKET_HOLD = 0.12;
 const MIN_LINE_VALUE = 0.012;
 const MAX_EVENT_WINDOW_HOURS = 48;
+const MINIMUM_RECOMMENDATION_FLOOR = 8;
 
 const candidateLabel = (outcome: SportsbookOutcome) => {
   if (typeof outcome.point === 'number') {
@@ -430,8 +431,9 @@ const buildCandidates = (events: BettingEvent[], news: NewsArticle[], analytics:
 
 const prefilterCandidates = (candidates: CandidateBet[]) => {
   const passed = candidates.filter((candidate) => buildPrefilterReason(candidate) === null);
+  const desiredCount = Math.max(MINIMUM_RECOMMENDATION_FLOOR, env.maxRecommendations);
 
-  if (passed.length >= 5) {
+  if (passed.length >= desiredCount) {
     return passed;
   }
 
@@ -454,11 +456,11 @@ const prefilterCandidates = (candidates: CandidateBet[]) => {
     })
     .map((entry) => entry.candidate);
 
-  return fallback.slice(0, Math.max(5, passed.length));
+  return fallback.slice(0, Math.max(desiredCount, passed.length));
 };
 
 const toRecommendations = (candidates: CandidateBet[]): Recommendation[] =>
-  candidates.slice(0, 5).map((candidate, index) => ({
+  candidates.slice(0, env.maxRecommendations).map((candidate, index) => ({
     id: candidate.id,
     rank: index + 1,
     matchup: candidate.matchup,
@@ -492,7 +494,7 @@ const parseJson = (content: string): LlmResponse | null => {
 
 const normalizeLlmRecommendations = (payload: LlmResponse): Recommendation[] =>
   (payload.recommendations ?? [])
-    .slice(0, 5)
+    .slice(0, env.maxRecommendations)
     .map((item, index) => ({
       id: `${item.matchup ?? 'bet'}-${item.market ?? 'market'}-${index}`,
       rank: item.rank ?? index + 1,
@@ -674,7 +676,7 @@ export async function generateRecommendations(
 ): Promise<ProviderResult<Recommendation[]>> {
   const heuristicCandidates = prefilterCandidates(buildCandidates(events, news, analytics)).sort((left, right) => right.score - left.score);
   const heuristicRecommendations = toRecommendations(heuristicCandidates);
-  const llmCandidates = heuristicCandidates.slice(0, 12);
+  const llmCandidates = heuristicCandidates.slice(0, Math.max(env.maxRecommendations * 2, 24));
 
   if (env.llmProxyUrl) {
     try {

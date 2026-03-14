@@ -2,6 +2,14 @@ import { env } from '../config/env';
 import { mockNews } from '../data/mock';
 import type { NewsArticle, ProviderResult } from '../types/sports';
 
+type RssFeedItem = {
+  title?: string;
+  description?: string;
+  link?: string;
+  pubDate?: string;
+  source?: string;
+};
+
 type NewsApiResponse = {
   articles?: Array<{
     title?: string;
@@ -74,6 +82,63 @@ const buildCurrentsUrl = () => {
   return `${env.currentsBaseUrl}?${params.toString()}`;
 };
 
+const decodeXmlEntities = (value: string) =>
+  value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+
+const stripTags = (value: string) => decodeXmlEntities(value).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+const readTag = (block: string, tagName: string) => {
+  const match = block.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+
+  return match ? match[1].trim() : undefined;
+};
+
+const parseRssItems = (xml: string): RssFeedItem[] => {
+  const matches = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];
+
+  return matches.map((item) => {
+    const description = readTag(item, 'description');
+    const sourceTag = item.match(/<source[^>]*>([\s\S]*?)<\/source>/i)?.[1];
+
+    return {
+      title: readTag(item, 'title'),
+      description,
+      link: readTag(item, 'link'),
+      pubDate: readTag(item, 'pubDate'),
+      source: sourceTag,
+    };
+  });
+};
+
+const googleRssDescriptionSource = (description: string) => {
+  const text = decodeXmlEntities(description);
+  const fontMatch = text.match(/<font[^>]*>([\s\S]*?)<\/font>/i);
+
+  return fontMatch ? stripTags(fontMatch[1]) : 'Google News';
+};
+
+const normalizeRssArticles = (items: RssFeedItem[], defaultSource: string, sourceFromDescription?: (description: string) => string): NewsArticle[] =>
+  items
+    .filter((item) => item.title && item.link && item.pubDate)
+    .map((item) => {
+      const description = item.description ? stripTags(item.description) : '';
+
+      return {
+        title: stripTags(item.title ?? ''),
+        description,
+        url: stripTags(item.link ?? ''),
+        source: item.description && sourceFromDescription ? sourceFromDescription(item.description) : stripTags(item.source ?? '') || defaultSource,
+        publishedAt: new Date(stripTags(item.pubDate ?? '')).toISOString(),
+      };
+    });
+
 const normalizeArticles = (payload: NewsApiResponse): NewsArticle[] =>
   (payload.articles ?? [])
     .filter((article) => article.title && article.url && article.publishedAt)
@@ -114,7 +179,7 @@ const dedupeArticles = (articles: NewsArticle[]) => {
   const seen = new Set<string>();
 
   return articles.filter((article) => {
-    const key = article.url.toLowerCase();
+    const key = `${article.title.toLowerCase()}::${article.source.toLowerCase()}`;
 
     if (seen.has(key)) {
       return false;
@@ -123,6 +188,30 @@ const dedupeArticles = (articles: NewsArticle[]) => {
     seen.add(key);
     return true;
   });
+};
+
+const isRelevantArticle = (article: NewsArticle) => {
+  const blob = `${article.title} ${article.description} ${article.source}`.toLowerCase();
+  const includeTerms = [
+    'odds',
+    'bet',
+    'sports betting',
+    'spread',
+    'moneyline',
+    'total',
+    'parlay',
+    'nfl',
+    'nba',
+    'nhl',
+    'mlb',
+    'soccer',
+    'premier league',
+    'ufc',
+    'college basketball',
+  ];
+  const excludeTerms = ['promo code', 'bonus code', 'advertisement', 'brand campaign'];
+
+  return includeTerms.some((term) => blob.includes(term)) && !excludeTerms.some((term) => blob.includes(term));
 };
 
 const fetchNewsApiArticles = async () => {
@@ -167,7 +256,29 @@ const fetchCurrentsArticles = async () => {
   return normalizeCurrentsArticles((await response.json()) as CurrentsResponse);
 };
 
+const fetchGoogleNewsArticles = async () => {
+  const response = await fetch(env.googleNewsRssUrl);
+
+  if (!response.ok) {
+    throw new Error(`Google News RSS returned ${response.status}`);
+  }
+
+  return normalizeRssArticles(parseRssItems(await response.text()), 'Google News', googleRssDescriptionSource);
+};
+
+const fetchEspnRssArticles = async () => {
+  const response = await fetch(env.espnRssUrl);
+
+  if (!response.ok) {
+    throw new Error(`ESPN RSS returned ${response.status}`);
+  }
+
+  return normalizeRssArticles(parseRssItems(await response.text()), 'ESPN');
+};
+
 const providerLoaders: Record<string, () => Promise<NewsArticle[] | null>> = {
+  google: fetchGoogleNewsArticles,
+  espn: fetchEspnRssArticles,
   newsapi: fetchNewsApiArticles,
   gnews: fetchGNewsArticles,
   currents: fetchCurrentsArticles,
@@ -195,7 +306,7 @@ export async function fetchNews(): Promise<ProviderResult<NewsArticle[]>> {
       .filter((result): result is PromiseFulfilledResult<{ provider: string; articles: NewsArticle[] | null }> => result.status === 'fulfilled')
       .filter((result) => (result.value.articles?.length ?? 0) > 0);
 
-    const articles = dedupeArticles(successful.flatMap((result) => result.value.articles ?? [])).slice(0, env.newsPageSize * 2);
+    const articles = dedupeArticles(successful.flatMap((result) => result.value.articles ?? []).filter(isRelevantArticle)).slice(0, env.newsPageSize * 3);
 
     if (articles.length === 0) {
       throw new Error('News provider returned no articles');

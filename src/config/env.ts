@@ -19,16 +19,21 @@ export const env = {
   oddsMarkets: process.env.EXPO_PUBLIC_ODDS_MARKETS ?? 'h2h,spreads,totals',
   oddsBookmakers: process.env.EXPO_PUBLIC_ODDS_BOOKMAKERS,
   maxEvents: toNumber(process.env.EXPO_PUBLIC_MAX_EVENTS, 12),
+  maxRecommendations: toNumber(process.env.EXPO_PUBLIC_MAX_RECOMMENDATIONS, 16),
   newsApiKey: process.env.EXPO_PUBLIC_NEWS_API_KEY,
   newsBaseUrl: process.env.EXPO_PUBLIC_NEWS_BASE_URL ?? 'https://newsapi.org/v2/everything',
   gNewsApiKey: process.env.EXPO_PUBLIC_GNEWS_API_KEY,
   gNewsBaseUrl: process.env.EXPO_PUBLIC_GNEWS_BASE_URL ?? 'https://gnews.io/api/v4/search',
   currentsApiKey: process.env.EXPO_PUBLIC_CURRENTS_API_KEY,
   currentsBaseUrl: process.env.EXPO_PUBLIC_CURRENTS_BASE_URL ?? 'https://api.currentsapi.services/v1/search',
+  googleNewsRssUrl:
+    process.env.EXPO_PUBLIC_GOOGLE_NEWS_RSS_URL ??
+    'https://news.google.com/rss/search?q=sports%20betting%20OR%20odds%20OR%20NBA%20OR%20NFL%20OR%20NHL%20OR%20soccer&hl=en-US&gl=US&ceid=US:en',
+  espnRssUrl: process.env.EXPO_PUBLIC_ESPN_RSS_URL ?? 'https://www.espn.com/espn/rss/news',
   newsQuery: process.env.EXPO_PUBLIC_NEWS_QUERY ?? 'sports betting OR odds OR NFL OR NBA OR MLB OR NHL OR UFC OR soccer',
   newsLanguage: process.env.EXPO_PUBLIC_NEWS_LANGUAGE ?? 'en',
   newsPageSize: toNumber(process.env.EXPO_PUBLIC_NEWS_PAGE_SIZE, 10),
-  newsProviderOrder: (process.env.EXPO_PUBLIC_NEWS_PROVIDER_ORDER ?? 'newsapi,gnews,currents')
+  newsProviderOrder: (process.env.EXPO_PUBLIC_NEWS_PROVIDER_ORDER ?? 'google,espn,newsapi,gnews,currents')
     .split(',')
     .map((value: string) => value.trim().toLowerCase())
     .filter(Boolean),
@@ -45,7 +50,7 @@ export const env = {
 
 export const recommendationSystemPrompt = [
   'You are an elite sports betting analyst with deep knowledge of sportsbook pricing, bankroll discipline, market-making behavior, and parlay construction.',
-  'Use the supplied odds, aggregated news, regression analytics, and screened candidate bets to produce the five strongest current positions.',
+  'Use the supplied odds, aggregated news, regression analytics, and screened candidate bets to produce as many strong current positions as justified, targeting roughly 12 to 20 ranked recommendations when the slate supports it.',
   'Prefer bets with the best available price, quant support from the regression model, low correlation, and grounded risk language.',
   'Treat parlays carefully and only endorse legs that remain individually strong after vig and correlation are considered.',
   'Return valid JSON only in the shape {"recommendations":[{"rank":1,"matchup":"","market":"","selection":"","sportsbook":"","odds":-110,"confidence":74,"score":8.4,"rationale":"","relatedHeadline":""}]}.'
