@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 const toNumber = (value: string | undefined, fallback: number) => {
   if (!value) {
     return fallback;
@@ -8,8 +10,10 @@ const toNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const defaultProxyBaseUrl = process.env.EXPO_PUBLIC_PROXY_BASE_URL ?? (Platform.OS === 'web' ? '' : undefined);
+
 export const env = {
-  proxyBaseUrl: process.env.EXPO_PUBLIC_PROXY_BASE_URL,
+  proxyBaseUrl: defaultProxyBaseUrl,
   oddsApiKey: process.env.EXPO_PUBLIC_ODDS_API_KEY,
   oddsRegions: process.env.EXPO_PUBLIC_ODDS_REGIONS ?? 'us',
   oddsMarkets: process.env.EXPO_PUBLIC_ODDS_MARKETS ?? 'h2h,spreads,totals',
@@ -30,7 +34,7 @@ export const env = {
     .filter(Boolean),
   llmProxyUrl:
     process.env.EXPO_PUBLIC_LLM_PROXY_URL ??
-    (process.env.EXPO_PUBLIC_PROXY_BASE_URL ? `${process.env.EXPO_PUBLIC_PROXY_BASE_URL}/api/llm/recommendations` : undefined),
+    (defaultProxyBaseUrl !== undefined ? `${defaultProxyBaseUrl}/api/llm/recommendations` : undefined),
   openRouterApiKey: process.env.EXPO_PUBLIC_OPENROUTER_API_KEY,
   openRouterModel: process.env.EXPO_PUBLIC_OPENROUTER_MODEL ?? 'openai/gpt-4.1-mini',
   openRouterSiteUrl: process.env.EXPO_PUBLIC_OPENROUTER_SITE_URL,

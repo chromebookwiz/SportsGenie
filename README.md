@@ -1,8 +1,8 @@
 # SportGenie
 
-SportGenie is an Expo React Native app for iOS-oriented sports betting analysis. It loads current sportsbook lines, recent sports-betting news, and a top-5 recommendation board powered first by a deterministic quant engine and optionally refined by an LLM.
+SportGenie is currently set up as a Vercel-first Expo web app for sports betting analysis. It loads current sportsbook lines, recent sports-betting news, and a top-5 recommendation board powered first by a deterministic quant engine and optionally refined by an LLM.
 
-The project is pinned to Expo SDK 54 to maximize compatibility with the current public Expo Go release on iPhone.
+The Expo SDK 54 setup remains in the repo, but the primary deployment target is now static web plus Vercel serverless API routes.
 
 ## What the app does
 
@@ -25,18 +25,20 @@ The project is pinned to Expo SDK 54 to maximize compatibility with the current 
 - Prices bets with a combination of regression outputs, consensus math, Monte Carlo win rates, expected value, z-score ranking, and Kelly sizing.
 - Surfaces a regression watchlist, model pulse cards, and player-trend summaries directly on the home screen.
 - Builds low-correlation parlay suggestions from the strongest screened single-bet recommendations using joint EV, Kelly, and pairwise correlation penalties.
-- Displays a mobile dashboard with provider status, top 5 bets, the news feed, and all tracked lines.
-- Adds responsive layouts, sport filters, haptic feedback, and tap-to-open news cards so the app feels better on both phones and tablets.
+- Displays a responsive dashboard with provider status, top 5 bets, the news feed, and all tracked lines.
+- Adds responsive layouts, sport filters, haptic feedback where available, and tap-to-open news cards so the app feels good on desktop and mobile web.
 - Supports Expo web for quick browser-based testing with `npm run web` and static web export with `npm run web:build`.
-- Includes a lightweight Express proxy in `server/` for secure OpenRouter calls and server-side player-stats aggregation.
+- Includes both a lightweight Express proxy in `server/` and Vercel serverless API routes in `api/` for secure OpenRouter calls and server-side player-stats aggregation.
 
 ## Environment setup
 
 Copy `.env.example` to `.env` and fill in the providers you want to use.
 
-Copy `.env.server.example` to `.env.server` for the secure proxy.
+Copy `.env.server.example` to `.env.server` for the server-side API layer.
 
 The proxy defaults to `PLAYER_STATS_SOURCE=thesportsdb` with the free public key `123`, so you do not need to buy or register for a player-data provider just to get started.
+
+On Vercel, add the same variables from `.env.example` and `.env.server.example` in the project settings. For web deployments, the client now defaults to relative `/api` calls, so you do not need to hardcode `EXPO_PUBLIC_PROXY_BASE_URL` just to use the co-deployed Vercel functions.
 
 ### Recommended production shape
 
@@ -74,25 +76,17 @@ Expected proxy response body:
 }
 ```
 
-## Run the app
+## Local development
 
 ```bash
 npm start
 ```
 
-Run the secure proxy in a separate terminal:
+Run the local proxy in a separate terminal if you want the standalone Express version:
 
 ```bash
 npm run server
 ```
-
-On Windows, the practical iOS workflow is:
-
-- Run `npm start`.
-- Scan the Expo QR code with Expo Go on an iPhone.
-- For a real installable iOS build, use EAS Build from Expo's cloud build service.
-
-If Expo Go previously showed an SDK incompatibility message, restart the Metro server after pulling these changes so the phone reconnects to the SDK 54 bundle.
 
 ## Web testing
 
@@ -106,6 +100,26 @@ For a static web bundle:
 npm run web:build
 ```
 
+## Vercel deployment
+
+This repo now includes [vercel.json](vercel.json) and Vercel serverless endpoints under `api/`.
+
+For a Git-based deploy:
+
+1. Import the GitHub repo into Vercel.
+2. Keep the root directory at the repo root.
+3. Set the build command to `npm run build` if Vercel does not pick it up automatically.
+4. Set the output directory to `dist` if Vercel does not pick it up automatically.
+5. Add any needed environment variables from `.env.example` and `.env.server.example` in the Vercel dashboard.
+
+For the Vercel-hosted app, the web client will call:
+
+- `/api/player-stats`
+- `/api/llm/recommendations`
+- `/api/health`
+
+That means you can deploy the frontend and API together without keeping the Express server as the primary runtime.
+
 ## Type check
 
 ```bash
@@ -116,7 +130,7 @@ npx tsc --noEmit
 
 - Without API keys, the app still runs using mock odds, mock news, and the deterministic quant engine.
 - The proxy now uses TheSportsDB's free roster and recent team results feed by default, then merges that with embedded player-history profiles for richer regression inputs where available.
-- The secure proxy is production-shaped but still minimal. It should be fronted by real auth, rate limiting, logging, and secret management before deployment.
+- The Vercel API layer is production-shaped but still minimal. It still needs auth, rate limiting, logging, and secret management hardening.
 - The dashboard intentionally exposes provider status so you can see whether the screen is using live feeds or fallback data.
 - When multiple news API keys are configured, the app merges the feeds and shows the combined provider status on the dashboard.
 - The app is materially stronger than a simple odds/news prompt wrapper, but it is not yet fully production-ready until you replace the free-source synthetic player envelopes with granular live player logs, expand historical backtesting, add model monitoring, and harden secret handling server-side.

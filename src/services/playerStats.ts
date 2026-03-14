@@ -30,7 +30,7 @@ const filterProfilesForEvents = (profiles: PlayerPerformanceProfile[], events: B
 export async function fetchPlayerProfiles(events: BettingEvent[]): Promise<ProviderResult<PlayerPerformanceProfile[]>> {
   const fallbackProfiles = filterProfilesForEvents(mockPlayerProfiles, events);
 
-  if (!env.proxyBaseUrl) {
+  if (env.proxyBaseUrl == null) {
     return {
       data: fallbackProfiles,
       provider: 'Embedded player-history fallback',
@@ -38,9 +38,10 @@ export async function fetchPlayerProfiles(events: BettingEvent[]): Promise<Provi
   }
 
   try {
+    const baseUrl = env.proxyBaseUrl ?? '';
     const teams = Array.from(new Set(events.flatMap((event) => [event.homeTeam, event.awayTeam]))).join(',');
     const sportKeys = Array.from(new Set(events.map((event) => event.sportKey))).join(',');
-    const response = await fetch(`${env.proxyBaseUrl}/api/player-stats?teams=${encodeURIComponent(teams)}&sportKeys=${encodeURIComponent(sportKeys)}`);
+    const response = await fetch(`${baseUrl}/api/player-stats?teams=${encodeURIComponent(teams)}&sportKeys=${encodeURIComponent(sportKeys)}`);
 
     if (!response.ok) {
       throw new Error(`Player-stats proxy returned ${response.status}`);
