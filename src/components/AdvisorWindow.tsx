@@ -12,7 +12,13 @@ import {
   View,
 } from 'react-native';
 
-import { askWebLlmAdvisor, isWebLlmSupported } from '../services/webllm';
+import {
+  askWebLlmAdvisor,
+  getActiveWebLlmModel,
+  isWebLlmSupported,
+  preloadWebLlmModel,
+  webLlmModelOptions,
+} from '../services/webllm';
 import type { AnalyticsOverview, BettingEvent, NewsArticle, Recommendation } from '../types/sports';
 
 type AdvisorWindowProps = {
@@ -36,6 +42,7 @@ type PersistedAdvisorState = {
   messages: ChatMessage[];
   windowState: WindowState;
   position?: { x: number; y: number };
+  modelId?: string;
 };
 
 const quickPrompts = [
@@ -80,8 +87,10 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>(defaultMessages);
   const [loading, setLoading] = useState(false);
+  const [modelLoading, setModelLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [selectedModel, setSelectedModel] = useState(getActiveWebLlmModel());
   const hasPositionRef = useRef(false);
   const hydratedRef = useRef(false);
   const scrollViewRef = useRef<ScrollView | null>(null);
@@ -90,6 +99,7 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
   const panelWidth = Math.min(Math.max(width * 0.34, 320), 420);
   const panelHeight = Math.min(Math.max(height * 0.5, 420), 620);
   const supported = isWebLlmSupported();
+  const canDragWindow = Platform.OS === 'web';
 
   const context = useMemo(
     () => ({
@@ -131,6 +141,10 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         setPosition(persisted.position);
         hasPositionRef.current = true;
       }
+
+      if (typeof persisted.modelId === 'string' && persisted.modelId.trim()) {
+        setSelectedModel(persisted.modelId.trim());
+      }
     } catch {
       setMessages(defaultMessages);
     } finally {
@@ -167,21 +181,46 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
       messages: messages.slice(-24),
       windowState,
       position,
+      modelId: selectedModel,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-  }, [messages, position, windowState]);
+  }, [messages, position, selectedModel, windowState]);
+
+  const loadSelectedModel = async () => {
+    const trimmedModel = selectedModel.trim();
+
+    if (!trimmedModel || modelLoading) {
+      return;
+    }
+
+    setErrorMessage(null);
+    setModelLoading(true);
+
+    try {
+      await preloadWebLlmModel(trimmedModel);
+      setSelectedModel(getActiveWebLlmModel());
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Model load failed');
+    } finally {
+      setModelLoading(false);
+    }
+  };
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => supported,
-        onMoveShouldSetPanResponder: () => supported,
+        onStartShouldSetPanResponder: () => canDragWindow,
+        onMoveShouldSetPanResponder: (_event, gestureState) => canDragWindow && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
+        onStartShouldSetPanResponderCapture: () => canDragWindow,
+        onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
+          canDragWindow && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
         onPanResponderGrant: () => {
           dragOriginRef.current = position;
         },
+        onPanResponderTerminationRequest: () => false,
         onPanResponderMove: (_event, gestureState) => {
-          if (!supported) {
+          if (!canDragWindow) {
             return;
           }
 
@@ -191,7 +230,7 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
           });
         },
       }),
-    [height, panelWidth, position, supported, width]
+    [canDragWindow, height, panelWidth, position, width]
   );
 
   const submitQuestion = async (question: string) => {
@@ -227,6 +266,7 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         question: trimmed,
         context,
         history,
+        modelId: selectedModel.trim(),
       });
 
       setMessages((current) => [
@@ -286,12 +326,20 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
       ]}
     >
       <View style={[styles.windowCard, Platform.OS !== 'web' ? { maxHeight: panelHeight } : null]}>
-        <View style={styles.windowHeader} {...(Platform.OS === 'web' ? panResponder.panHandlers : {})}>
+        <View
+          style={[styles.windowHeader, canDragWindow ? styles.windowHeaderDraggable : null]}
+          {...(canDragWindow ? panResponder.panHandlers : {})}
+        >
           <View>
             <Text style={styles.windowTitle}>Advisor</Text>
             <Text style={styles.windowSubtitle}>{supported ? 'Local WebLLM with research tools' : 'WebLLM unavailable on this runtime'}</Text>
           </View>
           <View style={styles.windowActions}>
+            {canDragWindow ? (
+              <View style={styles.dragPill}>
+                <Text style={styles.dragPillText}>Drag</Text>
+              </View>
+            ) : null}
             <Pressable style={styles.windowActionButton} onPress={() => setWindowState('minimized')}>
               <Text style={styles.windowActionText}>Min</Text>
             </Pressable>
@@ -304,6 +352,38 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
         <View style={styles.windowMetaRow}>
           <Text style={styles.windowMetaText}>{selectedSport === 'All sports' ? 'Full slate' : selectedSport}</Text>
           <Text style={styles.windowMetaText}>{recommendations.length} board candidates</Text>
+        </View>
+
+        <View style={styles.modelRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modelChipRow}>
+            {webLlmModelOptions.map((modelId) => (
+              <Pressable
+                key={modelId}
+                style={[styles.modelChip, selectedModel === modelId ? styles.modelChipActive : null]}
+                onPress={() => setSelectedModel(modelId)}
+              >
+                <Text style={[styles.modelChipText, selectedModel === modelId ? styles.modelChipTextActive : null]}>{modelId}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <View style={styles.modelInputRow}>
+            <TextInput
+              value={selectedModel}
+              onChangeText={setSelectedModel}
+              placeholder="Model ID"
+              placeholderTextColor="#7F786D"
+              style={styles.modelInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Pressable
+              style={[styles.loadButton, modelLoading ? styles.loadButtonDisabled : null]}
+              onPress={() => void loadSelectedModel()}
+            >
+              <Text style={styles.loadButtonText}>{modelLoading ? 'Loading...' : 'Load model'}</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.modelMetaText}>Active model: {getActiveWebLlmModel()}</Text>
         </View>
 
         <View style={styles.quickPromptRow}>
@@ -392,6 +472,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  windowHeaderDraggable: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A2A',
+  },
   windowTitle: {
     color: '#F5F1E8',
     fontSize: 15,
@@ -405,6 +489,20 @@ const styles = StyleSheet.create({
   windowActions: {
     flexDirection: 'row',
     gap: 8,
+    alignItems: 'center',
+  },
+  dragPill: {
+    borderWidth: 1,
+    borderColor: '#3D3D3D',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#1C1C1C',
+  },
+  dragPillText: {
+    color: '#BFB6A9',
+    fontSize: 12,
+    fontWeight: '700',
   },
   windowActionButton: {
     borderWidth: 1,
@@ -432,6 +530,69 @@ const styles = StyleSheet.create({
     color: '#5D584F',
     fontSize: 12,
     fontWeight: '600',
+  },
+  modelRow: {
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E4DDD2',
+  },
+  modelChipRow: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  modelChip: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D1CAC0',
+    backgroundColor: '#F3EEE4',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  modelChipActive: {
+    borderColor: '#111111',
+    backgroundColor: '#111111',
+  },
+  modelChipText: {
+    color: '#2B2925',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modelChipTextActive: {
+    color: '#F5F1E8',
+  },
+  modelInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  modelInput: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#CFC8BC',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#111111',
+  },
+  loadButton: {
+    borderRadius: 16,
+    backgroundColor: '#111111',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  loadButtonDisabled: {
+    opacity: 0.5,
+  },
+  loadButtonText: {
+    color: '#F5F1E8',
+    fontWeight: '700',
+  },
+  modelMetaText: {
+    color: '#625C52',
+    fontSize: 12,
   },
   quickPromptRow: {
     flexDirection: 'row',

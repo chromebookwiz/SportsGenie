@@ -91,7 +91,7 @@ export const env = {
   llmProviderOrder: toList(process.env.EXPO_PUBLIC_LLM_PROVIDER_ORDER, 'proxy,webllm,openrouter,openai').map((value) =>
     value.toLowerCase()
   ),
-  enableWebLlm: toBoolean(process.env.EXPO_PUBLIC_ENABLE_WEBLLM, false),
+  enableWebLlm: toBoolean(process.env.EXPO_PUBLIC_ENABLE_WEBLLM, true),
   webLlmModel: process.env.EXPO_PUBLIC_WEBLLM_MODEL ?? 'Llama-3.1-8B-Instruct-q4f32_1-MLC',
   webLlmToolMaxRounds: toNumber(process.env.EXPO_PUBLIC_WEBLLM_TOOL_MAX_ROUNDS, 3),
   openRouterApiKey: process.env.EXPO_PUBLIC_OPENROUTER_API_KEY,

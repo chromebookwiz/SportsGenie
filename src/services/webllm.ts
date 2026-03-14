@@ -112,6 +112,19 @@ type WebLlmEngine = {
 };
 
 let enginePromise: Promise<WebLlmEngine> | null = null;
+let activeModelId = env.webLlmModel;
+
+export const webLlmModelOptions = [
+  'Llama-3.1-8B-Instruct-q4f32_1-MLC',
+  'Llama-3.2-3B-Instruct-q4f32_1-MLC',
+  'Phi-3.5-mini-instruct-q4f32_1-MLC',
+  'Qwen2.5-7B-Instruct-q4f32_1-MLC',
+];
+
+const resolveModelId = (modelId?: string) => {
+  const candidate = String(modelId ?? activeModelId ?? env.webLlmModel).trim();
+  return candidate || env.webLlmModel;
+};
 
 const hasWebGpuSupport = () => {
   if (typeof navigator === 'undefined') {
@@ -675,13 +688,15 @@ const runWebLlmToolLoop = async ({
   userMessage,
   context,
   jsonMode,
+  modelId,
 }: {
   systemPrompt: string;
   userMessage: string;
   context: ResearchToolContext;
   jsonMode: boolean;
+  modelId?: string;
 }) => {
-  const engine = await getEngine();
+  const engine = await getEngine(modelId);
   const messages: WebLlmMessage[] = [
     {
       role: 'system',
@@ -749,15 +764,18 @@ const runWebLlmToolLoop = async ({
   throw new Error('WebLLM exceeded tool-call limit without returning a final answer');
 };
 
-const getEngine = async () => {
+const getEngine = async (modelId?: string) => {
   if (!isWebLlmSupported()) {
     throw new Error('WebLLM requires a web build with WebGPU support and EXPO_PUBLIC_ENABLE_WEBLLM=true');
   }
 
-  if (!enginePromise) {
+  const requestedModel = resolveModelId(modelId);
+
+  if (!enginePromise || activeModelId !== requestedModel) {
+    activeModelId = requestedModel;
     enginePromise = import('@mlc-ai/web-llm')
       .then(async ({ CreateMLCEngine }) => {
-        const engine = (await CreateMLCEngine(env.webLlmModel, {
+        const engine = (await CreateMLCEngine(requestedModel, {
           initProgressCallback: () => undefined,
         })) as WebLlmEngine;
 
@@ -774,6 +792,14 @@ const getEngine = async () => {
 
 export const isWebLlmSupported = () => Platform.OS === 'web' && env.enableWebLlm && hasWebGpuSupport();
 
+export const getActiveWebLlmModel = () => activeModelId;
+
+export const preloadWebLlmModel = async (modelId?: string) => {
+  const resolved = resolveModelId(modelId);
+  await getEngine(resolved);
+  return resolved;
+};
+
 export const callWebLlm = async (systemPrompt: string, userPayload: unknown) => {
   return runWebLlmToolLoop({
     systemPrompt: buildToolEnabledSystemPrompt(systemPrompt),
@@ -787,14 +813,17 @@ export const askWebLlmAdvisor = async ({
   question,
   context,
   history = [],
+  modelId,
 }: {
   question: string;
   context: ResearchToolContext;
   history?: AdvisorHistoryMessage[];
+  modelId?: string;
 }) =>
   runWebLlmToolLoop({
     systemPrompt: buildAdvisorSystemPrompt(),
     userMessage: buildAdvisorUserMessage(question, context, history),
     context,
     jsonMode: false,
+    modelId,
   });

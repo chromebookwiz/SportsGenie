@@ -62,11 +62,11 @@ If you do nothing else on the odds side, the app will now try ESPN public odds f
 The recommendation pipeline is controlled through `.env`:
 
 - `EXPO_PUBLIC_LLM_PROVIDER_ORDER=proxy,webllm,openrouter,openai`
-- `EXPO_PUBLIC_ENABLE_WEBLLM=false`
+- `EXPO_PUBLIC_ENABLE_WEBLLM=true`
 - `EXPO_PUBLIC_WEBLLM_MODEL=Llama-3.1-8B-Instruct-q4f32_1-MLC`
 - `EXPO_PUBLIC_WEBLLM_TOOL_MAX_ROUNDS=3`
 
-WebLLM only runs in web builds on browsers with WebGPU support. The first model load is large and can take time because weights are downloaded and cached in the browser. The browser-side adapter now supports bounded local tool calling so the model can search the loaded slate, pull fresh Google News RSS results, and fetch player profiles before it commits to picks. Keep the proxy or hosted API providers enabled if you want a faster cold start or a fallback on unsupported browsers.
+WebLLM is enabled by default for web builds, but it still only activates on browsers with WebGPU support. The first model load is large and can take time because weights are downloaded and cached in the browser. The browser-side adapter supports bounded local tool calling so the model can search the loaded slate, pull fresh Google News RSS results, and fetch player profiles before it commits to picks, and the advisor window includes explicit model loading controls so users can choose which local model to load. Keep the proxy or hosted API providers enabled if you want a faster cold start or a fallback on unsupported browsers.
 
 ### Odds provider controls
 
