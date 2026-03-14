@@ -1,6 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -16,6 +15,7 @@ import {
   View,
 } from 'react-native';
 
+import { AdvisorWindow } from './src/components/AdvisorWindow';
 import { loadDashboardData } from './src/services/dashboard';
 import type { BettingEvent, DashboardData, NewsArticle, ParlayRecommendation, Recommendation } from './src/types/sports';
 import {
@@ -113,7 +113,7 @@ function RecommendationCard({ recommendation, compact }: { recommendation: Recom
   const barWidth = `${Math.max(10, Math.min(100, recommendation.confidence))}%` as const;
 
   return (
-    <LinearGradient colors={['#11253A', '#0A1725']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.recommendationCard}>
+    <View style={styles.recommendationCard}>
       <View style={styles.recommendationHeaderRow}>
         <View style={styles.rankToken}>
           <Text style={styles.rankBadge}>#{recommendation.rank}</Text>
@@ -151,7 +151,7 @@ function RecommendationCard({ recommendation, compact }: { recommendation: Recom
           News watch: {recommendation.relatedHeadline}
         </Text>
       ) : null}
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -475,13 +475,11 @@ export default function App() {
         }
       >
         <View style={styles.heroShell}>
-          <LinearGradient colors={['#143654', '#081521', '#160F2D']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroCard}>
-            <View style={styles.glowOrbPrimary} />
-            <View style={styles.glowOrbSecondary} />
+          <View style={styles.heroCard}>
             <Text style={styles.eyebrow}>SportGenie</Text>
-            <Text style={styles.heroTitle}>Quant-first betting engine with parlays and LLM analysis layered on top.</Text>
+            <Text style={styles.heroTitle}>Quant-first betting board with restrained LLM research on top.</Text>
             <Text style={styles.heroSubtitle}>
-              Live sportsbook prices, no-vig consensus math, regression signals, Monte Carlo hit rates, and optional LLM refinement for the current slate.
+              Live prices, no-vig math, model signals, and tool-assisted recommendations presented in a tighter, cleaner board.
             </Text>
             <View style={styles.moodRow}>
               <View style={styles.moodChip}>
@@ -521,7 +519,7 @@ export default function App() {
               </Text>
               <Text style={styles.lastUpdatedText}>Optimized for phone and tablet widths</Text>
             </View>
-          </LinearGradient>
+          </View>
         </View>
 
         {data ? (
@@ -600,6 +598,14 @@ export default function App() {
           </>
         ) : null}
       </ScrollView>
+      <AdvisorWindow
+        events={filteredBets}
+        news={filteredNews.slice(0, 12)}
+        analytics={data?.analytics ?? null}
+        recommendations={filteredRecommendations.slice(0, 12)}
+        selectedSport={selectedSport}
+        providerSummary={data?.providers}
+      />
     </SafeAreaView>
   );
 }
@@ -607,68 +613,49 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#06131F',
+    backgroundColor: '#F2EFE8',
   },
   screen: {
     flex: 1,
-    backgroundColor: '#06131F',
+    backgroundColor: '#F2EFE8',
   },
   content: {
     paddingHorizontal: 18,
     paddingBottom: 40,
-    gap: 16,
+    gap: 14,
   },
   heroShell: {
     marginTop: 14,
   },
   heroCard: {
-    borderRadius: 28,
+    backgroundColor: '#111111',
+    borderRadius: 4,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#294565',
+    borderColor: '#111111',
     shadowColor: '#000000',
-    shadowOpacity: 0.25,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 10,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  glowOrbPrimary: {
-    position: 'absolute',
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: 'rgba(125, 211, 252, 0.12)',
-    top: -40,
-    right: -20,
-  },
-  glowOrbSecondary: {
-    position: 'absolute',
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: 'rgba(250, 204, 21, 0.12)',
-    bottom: -35,
-    left: -20,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   eyebrow: {
-    color: '#FACC15',
-    fontSize: 13,
+    color: '#D6C2A2',
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 1.3,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   heroTitle: {
-    color: '#F8FAFC',
-    fontSize: 30,
-    lineHeight: 36,
+    color: '#F5F1E8',
+    fontSize: 28,
+    lineHeight: 34,
     fontWeight: '800',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   heroSubtitle: {
-    color: '#B8C7D9',
+    color: '#D3CEC3',
     fontSize: 15,
     lineHeight: 22,
   },
@@ -679,25 +666,25 @@ const styles = StyleSheet.create({
   moodChip: {
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.14)',
-    backgroundColor: 'rgba(6, 19, 31, 0.48)',
+    borderColor: '#4B4B4B',
+    backgroundColor: '#1B1B1B',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 18,
+    borderRadius: 16,
   },
   moodChipLabel: {
-    color: '#89A7C1',
+    color: '#A39D8F',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     fontSize: 11,
   },
   moodChipValue: {
-    color: '#F8FAFC',
+    color: '#F5F1E8',
     fontWeight: '800',
     marginTop: 3,
   },
   moodCaption: {
-    color: '#D8E3EE',
+    color: '#D3CEC3',
     lineHeight: 21,
     maxWidth: 560,
   },
@@ -708,7 +695,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   primaryButton: {
-    backgroundColor: '#FACC15',
+    backgroundColor: '#F0E8DA',
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 14,
@@ -719,39 +706,40 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   primaryButtonText: {
-    color: '#0B1620',
+    color: '#111111',
     fontSize: 15,
     fontWeight: '800',
   },
   secondaryButton: {
     marginTop: 14,
     alignSelf: 'flex-start',
-    borderRadius: 14,
+    borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#F87171',
+    borderColor: '#C45D4B',
+    backgroundColor: '#FFF7F4',
   },
   secondaryButtonText: {
-    color: '#FECACA',
+    color: '#7B2D21',
     fontWeight: '700',
   },
   snapshotCard: {
     minWidth: 88,
-    backgroundColor: 'rgba(7, 18, 28, 0.55)',
-    borderRadius: 16,
+    backgroundColor: '#1B1B1B',
+    borderRadius: 4,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: '#315675',
+    borderColor: '#343434',
   },
   snapshotValue: {
-    color: '#F8FAFC',
+    color: '#F5F1E8',
     fontSize: 24,
     fontWeight: '800',
   },
   snapshotLabel: {
-    color: '#8FA5BB',
+    color: '#A39D8F',
     fontSize: 12,
     marginTop: 4,
   },
@@ -763,7 +751,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   lastUpdatedText: {
-    color: '#9AB0C5',
+    color: '#A39D8F',
     fontSize: 12,
   },
   providersRow: {
@@ -774,28 +762,27 @@ const styles = StyleSheet.create({
   providerPill: {
     flexGrow: 1,
     minWidth: '30%',
-    borderRadius: 18,
+    borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderWidth: 1,
+    backgroundColor: '#FBF8F1',
   },
   providerPillLive: {
-    backgroundColor: '#0E2E23',
-    borderColor: '#1D6C53',
+    borderColor: '#111111',
   },
   providerPillFallback: {
-    backgroundColor: '#3A2412',
-    borderColor: '#9A6A30',
+    borderColor: '#B7B0A4',
   },
   providerLabel: {
-    color: '#D7E4F0',
+    color: '#6E685F',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 4,
   },
   providerValue: {
-    color: '#FFFFFF',
+    color: '#111111',
     fontWeight: '700',
     fontSize: 14,
   },
@@ -811,51 +798,53 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   filterChipActive: {
-    backgroundColor: '#FACC15',
-    borderColor: '#FACC15',
+    backgroundColor: '#111111',
+    borderColor: '#111111',
   },
   filterChipIdle: {
-    backgroundColor: '#0D2234',
-    borderColor: '#1F3A54',
+    backgroundColor: '#FBF8F1',
+    borderColor: '#CFC8BC',
   },
   filterChipText: {
     fontWeight: '700',
     fontSize: 13,
   },
   filterChipTextActive: {
-    color: '#09131D',
+    color: '#F5F1E8',
   },
   filterChipTextIdle: {
-    color: '#D8E3EE',
+    color: '#111111',
   },
   loadingCard: {
-    backgroundColor: '#0D2234',
-    borderRadius: 20,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 24,
     alignItems: 'center',
     gap: 14,
+    borderWidth: 1,
+    borderColor: '#D1CAC0',
   },
   loadingText: {
-    color: '#D7E4F0',
+    color: '#3C3A35',
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 20,
   },
   errorCard: {
-    backgroundColor: '#341519',
-    borderRadius: 22,
+    backgroundColor: '#FFF7F4',
+    borderRadius: 4,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#7F1D1D',
+    borderColor: '#C45D4B',
   },
   errorTitle: {
-    color: '#FECACA',
+    color: '#7B2D21',
     fontWeight: '800',
     fontSize: 18,
     marginBottom: 8,
   },
   errorMessage: {
-    color: '#FDE2E2',
+    color: '#7B2D21',
     lineHeight: 20,
   },
   sectionBlock: {
@@ -866,19 +855,20 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   sectionTitle: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 22,
     fontWeight: '800',
   },
   sectionSubtitle: {
-    color: '#90A4B8',
+    color: '#666055',
     lineHeight: 20,
   },
   recommendationCard: {
-    borderRadius: 22,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#18344D',
+    borderColor: '#D1CAC0',
     gap: 8,
   },
   recommendationHeaderRow: {
@@ -887,33 +877,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   rankToken: {
-    backgroundColor: 'rgba(250, 204, 21, 0.12)',
-    borderRadius: 999,
+    backgroundColor: '#F0E8DA',
+    borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   rankBadge: {
-    color: '#FACC15',
+    color: '#111111',
     fontSize: 14,
     fontWeight: '800',
   },
   confidenceText: {
-    color: '#7DD3FC',
+    color: '#6E685F',
     fontSize: 13,
     fontWeight: '700',
   },
   recommendationMatchup: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 19,
     fontWeight: '800',
   },
   recommendationPick: {
-    color: '#E2E8F0',
+    color: '#2B2925',
     fontSize: 17,
     fontWeight: '700',
   },
   recommendationMeta: {
-    color: '#9FB4C8',
+    color: '#6E685F',
     fontSize: 13,
   },
   recommendationBadgeRow: {
@@ -922,8 +912,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   edgeBadge: {
-    color: '#D9F99D',
-    backgroundColor: 'rgba(101, 163, 13, 0.18)',
+    color: '#2F3A1B',
+    backgroundColor: '#E8E4D8',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -931,8 +921,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   riskBadge: {
-    color: '#FDE68A',
-    backgroundColor: 'rgba(245, 158, 11, 0.16)',
+    color: '#5E4A20',
+    backgroundColor: '#F0E8DA',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -941,8 +931,8 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   parlayBadge: {
-    color: '#C4B5FD',
-    backgroundColor: 'rgba(124, 58, 237, 0.18)',
+    color: '#3B3530',
+    backgroundColor: '#E8E4D8',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -952,67 +942,67 @@ const styles = StyleSheet.create({
   confidenceTrack: {
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#18344D',
+    backgroundColor: '#DDD6CB',
     overflow: 'hidden',
   },
   confidenceFill: {
     height: '100%',
     borderRadius: 999,
-    backgroundColor: '#22C55E',
+    backgroundColor: '#111111',
   },
   recommendationReason: {
-    color: '#D6E2EE',
+    color: '#2B2925',
     lineHeight: 20,
   },
   modelSummary: {
-    color: '#93C5FD',
+    color: '#4D4A44',
     lineHeight: 19,
   },
   quantMetaLine: {
-    color: '#D1E4F7',
+    color: '#4D4A44',
     lineHeight: 18,
     fontSize: 12,
   },
   supportingPlayers: {
-    color: '#C4D5E7',
+    color: '#4D4A44',
     lineHeight: 19,
   },
   recommendationHeadline: {
-    color: '#FACC15',
+    color: '#7A6849',
     lineHeight: 20,
   },
   quantGrid: {
     gap: 12,
   },
   quantCard: {
-    backgroundColor: '#0D2234',
-    borderRadius: 20,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#21425F',
+    borderColor: '#D1CAC0',
     gap: 6,
   },
   quantLabel: {
-    color: '#8FA5BB',
+    color: '#6E685F',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   quantValue: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 20,
     fontWeight: '800',
   },
   quantSubtext: {
-    color: '#C7D6E4',
+    color: '#4D4A44',
     lineHeight: 19,
   },
   parlayCard: {
-    backgroundColor: '#15152D',
-    borderRadius: 20,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#34345F',
+    borderColor: '#D1CAC0',
     gap: 10,
   },
   parlayHeaderRow: {
@@ -1022,25 +1012,25 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   parlayTitle: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 18,
     fontWeight: '800',
   },
   parlayOdds: {
-    color: '#C4B5FD',
+    color: '#111111',
     fontSize: 18,
     fontWeight: '800',
   },
   parlayMeta: {
-    color: '#C7D2FE',
+    color: '#6E685F',
     fontSize: 13,
   },
   parlayReason: {
-    color: '#D8E3EE',
+    color: '#2B2925',
     lineHeight: 19,
   },
   parlayQuantLine: {
-    color: '#DDD6FE',
+    color: '#4D4A44',
     fontSize: 12,
     lineHeight: 18,
   },
@@ -1050,22 +1040,22 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#2C2C4F',
+    borderTopColor: '#DDD6CB',
   },
   parlayLegSelection: {
-    color: '#F8FAFC',
+    color: '#111111',
     flex: 1,
   },
   parlayLegOdds: {
-    color: '#A5B4FC',
+    color: '#4D4A44',
     fontWeight: '700',
   },
   playerCard: {
-    backgroundColor: '#091B2A',
-    borderRadius: 18,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1E3850',
+    borderColor: '#D1CAC0',
     gap: 6,
   },
   playerCardHeader: {
@@ -1074,30 +1064,30 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   playerName: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 17,
     fontWeight: '700',
   },
   playerMeta: {
-    color: '#8FA5BB',
+    color: '#6E685F',
     marginTop: 4,
   },
   playerProjection: {
-    color: '#FACC15',
+    color: '#111111',
     fontSize: 22,
     fontWeight: '800',
   },
   playerStatsLine: {
-    color: '#D6E2EE',
+    color: '#2B2925',
     lineHeight: 19,
   },
   newsCard: {
-    backgroundColor: '#10293D',
-    borderRadius: 20,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 18,
     gap: 8,
     borderWidth: 1,
-    borderColor: '#20405A',
+    borderColor: '#D1CAC0',
   },
   newsSourceRow: {
     flexDirection: 'row',
@@ -1105,36 +1095,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   newsSource: {
-    color: '#FACC15',
+    color: '#7A6849',
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
   },
   newsTime: {
-    color: '#A8BCD0',
+    color: '#6E685F',
     fontSize: 12,
   },
   newsTitle: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 18,
     fontWeight: '700',
     lineHeight: 24,
   },
   newsDescription: {
-    color: '#D7E4F0',
+    color: '#2B2925',
     lineHeight: 20,
   },
   newsUrl: {
-    color: '#7DD3FC',
+    color: '#4D4A44',
     fontSize: 12,
     fontWeight: '700',
   },
   eventCard: {
-    backgroundColor: '#081622',
-    borderRadius: 22,
+    backgroundColor: '#FBF8F1',
+    borderRadius: 4,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#1B3044',
+    borderColor: '#D1CAC0',
     gap: 14,
   },
   eventHeaderRow: {
@@ -1143,29 +1133,31 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   eventLeague: {
-    color: '#FACC15',
+    color: '#7A6849',
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
     letterSpacing: 0.7,
   },
   eventTime: {
-    color: '#8EA3B8',
+    color: '#6E685F',
     fontSize: 12,
   },
   eventMatchup: {
-    color: '#F8FAFC',
+    color: '#111111',
     fontSize: 20,
     fontWeight: '800',
   },
   bookmakerBlock: {
-    backgroundColor: '#0F2436',
-    borderRadius: 16,
+    backgroundColor: '#F7F3EB',
+    borderRadius: 4,
     padding: 14,
     gap: 10,
+    borderWidth: 1,
+    borderColor: '#E2DBD0',
   },
   bookmakerName: {
-    color: '#E2E8F0',
+    color: '#111111',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1173,7 +1165,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   marketLabel: {
-    color: '#90A4B8',
+    color: '#6E685F',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
@@ -1188,10 +1180,10 @@ const styles = StyleSheet.create({
   },
   outcomeName: {
     flex: 1,
-    color: '#F8FAFC',
+    color: '#111111',
   },
   outcomePrice: {
-    color: '#7DD3FC',
+    color: '#4D4A44',
     fontWeight: '700',
   },
   desktopGrid: {
@@ -1208,7 +1200,7 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   emptyText: {
-    color: '#8FA5BB',
+    color: '#6E685F',
     lineHeight: 20,
     paddingVertical: 8,
   },

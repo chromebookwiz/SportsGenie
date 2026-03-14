@@ -10,6 +10,30 @@ const toNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const toBoolean = (value: string | undefined, fallback: boolean) => {
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+};
+
+const toList = (value: string | undefined, fallback: string) =>
+  (value ?? fallback)
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
 const defaultProxyBaseUrl = process.env.EXPO_PUBLIC_PROXY_BASE_URL ?? (Platform.OS === 'web' ? '' : undefined);
 
 export const env = {
@@ -18,6 +42,19 @@ export const env = {
   oddsRegions: process.env.EXPO_PUBLIC_ODDS_REGIONS ?? 'us',
   oddsMarkets: process.env.EXPO_PUBLIC_ODDS_MARKETS ?? 'h2h,spreads,totals',
   oddsBookmakers: process.env.EXPO_PUBLIC_ODDS_BOOKMAKERS,
+  oddsProviderOrder: toList(process.env.EXPO_PUBLIC_ODDS_PROVIDER_ORDER, 'espn,kalshi,the-odds-api').map((value) =>
+    value.toLowerCase()
+  ),
+  enableEspnOdds: toBoolean(process.env.EXPO_PUBLIC_ENABLE_ESPN_ODDS, true),
+  espnOddsSports: toList(process.env.EXPO_PUBLIC_ESPN_ODDS_SPORTS, 'basketball/nba,hockey/nhl,soccer/eng.1').map(
+    (value) => value.toLowerCase()
+  ),
+  enableKalshiOdds: toBoolean(process.env.EXPO_PUBLIC_ENABLE_KALSHI_ODDS, true),
+  kalshiBaseUrl: process.env.EXPO_PUBLIC_KALSHI_BASE_URL ?? 'https://api.elections.kalshi.com/trade-api/v2',
+  kalshiSeries: toList(
+    process.env.EXPO_PUBLIC_KALSHI_SERIES,
+    'KXNBAGAME,KXNBASPREAD,KXNBATOTAL,KXNHLGAME,KXNHLTOTAL,KXEPLGAME,KXEPLSPREAD,KXEPLTOTAL'
+  ).map((value) => value.toUpperCase()),
   maxEvents: toNumber(process.env.EXPO_PUBLIC_MAX_EVENTS, 12),
   maxRecommendations: toNumber(process.env.EXPO_PUBLIC_MAX_RECOMMENDATIONS, 20),
   minRecommendationFloor: toNumber(process.env.EXPO_PUBLIC_MIN_RECOMMENDATION_FLOOR, 10),
@@ -51,6 +88,12 @@ export const env = {
   llmProxyUrl:
     process.env.EXPO_PUBLIC_LLM_PROXY_URL ??
     (defaultProxyBaseUrl !== undefined ? `${defaultProxyBaseUrl}/api/llm/recommendations` : undefined),
+  llmProviderOrder: toList(process.env.EXPO_PUBLIC_LLM_PROVIDER_ORDER, 'proxy,webllm,openrouter,openai').map((value) =>
+    value.toLowerCase()
+  ),
+  enableWebLlm: toBoolean(process.env.EXPO_PUBLIC_ENABLE_WEBLLM, false),
+  webLlmModel: process.env.EXPO_PUBLIC_WEBLLM_MODEL ?? 'Llama-3.1-8B-Instruct-q4f32_1-MLC',
+  webLlmToolMaxRounds: toNumber(process.env.EXPO_PUBLIC_WEBLLM_TOOL_MAX_ROUNDS, 3),
   openRouterApiKey: process.env.EXPO_PUBLIC_OPENROUTER_API_KEY,
   openRouterModel: process.env.EXPO_PUBLIC_OPENROUTER_MODEL ?? 'openai/gpt-4.1-mini',
   openRouterSiteUrl: process.env.EXPO_PUBLIC_OPENROUTER_SITE_URL,

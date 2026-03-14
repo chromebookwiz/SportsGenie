@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.82",
     "@expo/metro-runtime": "~6.1.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

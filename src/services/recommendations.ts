@@ -11,6 +11,7 @@ import {
   standardDeviation,
   zScore,
 } from './quant';
+import { callWebLlm, isWebLlmSupported } from './webllm';
 
 type CandidateBet = {
   id: string;
@@ -56,6 +57,15 @@ type LlmResponse = {
     rationale?: string;
     relatedHeadline?: string;
   }>;
+};
+
+type LlmProviderKey = 'proxy' | 'webllm' | 'openrouter' | 'openai';
+
+type LlmRequestContext = {
+  events: BettingEvent[];
+  news: NewsArticle[];
+  analytics: AnalyticsOverview;
+  candidates: CandidateBet[];
 };
 
 const marketPriority: Record<string, number> = {
@@ -573,12 +583,32 @@ const toRecommendations = (candidates: CandidateBet[]): Recommendation[] =>
   }));
 
 const parseJson = (content: string): LlmResponse | null => {
+  const normalized = content.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');
+
   try {
-    return JSON.parse(content) as LlmResponse;
+    return JSON.parse(normalized) as LlmResponse;
   } catch {
-    return null;
+    const start = normalized.indexOf('{');
+    const end = normalized.lastIndexOf('}');
+
+    if (start < 0 || end <= start) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(normalized.slice(start, end + 1)) as LlmResponse;
+    } catch {
+      return null;
+    }
   }
 };
+
+const buildLlmPayload = ({ events, news, analytics, candidates }: LlmRequestContext) => ({
+  events,
+  news,
+  analytics,
+  candidates: candidates.slice(0, 20),
+});
 
 const normalizeLlmRecommendations = (payload: LlmResponse): Recommendation[] =>
   (payload.recommendations ?? [])
@@ -598,12 +628,7 @@ const normalizeLlmRecommendations = (payload: LlmResponse): Recommendation[] =>
     }))
     .sort((left, right) => left.rank - right.rank);
 
-const callProxy = async (
-  events: BettingEvent[],
-  news: NewsArticle[],
-  analytics: AnalyticsOverview,
-  candidates: CandidateBet[]
-) => {
+const callProxy = async ({ events, news, analytics, candidates }: LlmRequestContext) => {
   const response = await fetch(env.llmProxyUrl ?? '', {
     method: 'POST',
     headers: {
@@ -611,10 +636,7 @@ const callProxy = async (
     },
     body: JSON.stringify({
       systemPrompt: recommendationSystemPrompt,
-      events,
-      news,
-      analytics,
-      candidates: candidates.slice(0, 20),
+      ...buildLlmPayload({ events, news, analytics, candidates }),
     }),
   });
 
@@ -625,12 +647,7 @@ const callProxy = async (
   return (await response.json()) as LlmResponse;
 };
 
-const callOpenAi = async (
-  events: BettingEvent[],
-  news: NewsArticle[],
-  analytics: AnalyticsOverview,
-  candidates: CandidateBet[]
-) => {
+const callOpenAi = async ({ events, news, analytics, candidates }: LlmRequestContext) => {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -648,12 +665,7 @@ const callOpenAi = async (
         },
         {
           role: 'user',
-          content: JSON.stringify({
-            events,
-            news,
-            analytics,
-            candidates: candidates.slice(0, 20),
-          }),
+          content: JSON.stringify(buildLlmPayload({ events, news, analytics, candidates })),
         },
       ],
     }),
@@ -686,12 +698,7 @@ const callOpenAi = async (
   return parsed;
 };
 
-const callOpenRouter = async (
-  events: BettingEvent[],
-  news: NewsArticle[],
-  analytics: AnalyticsOverview,
-  candidates: CandidateBet[]
-) => {
+const callOpenRouter = async ({ events, news, analytics, candidates }: LlmRequestContext) => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${env.openRouterApiKey}`,
@@ -719,12 +726,7 @@ const callOpenRouter = async (
         },
         {
           role: 'user',
-          content: JSON.stringify({
-            events,
-            news,
-            analytics,
-            candidates: candidates.slice(0, 20),
-          }),
+          content: JSON.stringify(buildLlmPayload({ events, news, analytics, candidates })),
         },
       ],
     }),
@@ -757,6 +759,50 @@ const callOpenRouter = async (
   return parsed;
 };
 
+const callLocalWebLlm = async ({ events, news, analytics, candidates }: LlmRequestContext) => {
+  const content = await callWebLlm(recommendationSystemPrompt, buildLlmPayload({ events, news, analytics, candidates }));
+  const parsed = parseJson(content);
+
+  if (!parsed) {
+    throw new Error('WebLLM returned invalid JSON');
+  }
+
+  return parsed;
+};
+
+const llmProviderLabels: Record<LlmProviderKey, string> = {
+  proxy: 'Live tool-calling LLM proxy',
+  webllm: 'Local WebLLM with tools',
+  openrouter: 'Live OpenRouter',
+  openai: 'Live OpenAI',
+};
+
+const isConfiguredLlmProvider = (provider: LlmProviderKey) => {
+  switch (provider) {
+    case 'proxy':
+      return Boolean(env.llmProxyUrl);
+    case 'webllm':
+      return isWebLlmSupported();
+    case 'openrouter':
+      return Boolean(env.openRouterApiKey);
+    case 'openai':
+      return Boolean(env.openAiApiKey);
+  }
+};
+
+const callConfiguredLlmProvider = async (provider: LlmProviderKey, context: LlmRequestContext) => {
+  switch (provider) {
+    case 'proxy':
+      return callProxy(context);
+    case 'webllm':
+      return callLocalWebLlm(context);
+    case 'openrouter':
+      return callOpenRouter(context);
+    case 'openai':
+      return callOpenAi(context);
+  }
+};
+
 export async function generateRecommendations(
   events: BettingEvent[],
   news: NewsArticle[],
@@ -766,65 +812,43 @@ export async function generateRecommendations(
   const heuristicRecommendations = toRecommendations(heuristicCandidates);
   const llmCandidates = heuristicCandidates.slice(0, Math.max(env.maxRecommendations * 2, 30));
 
-  if (env.llmProxyUrl) {
+  const context: LlmRequestContext = {
+    events,
+    news,
+    analytics,
+    candidates: llmCandidates,
+  };
+  const attemptedProviders: string[] = [];
+  const orderedProviders = env.llmProviderOrder.filter(
+    (provider): provider is LlmProviderKey => ['proxy', 'webllm', 'openrouter', 'openai'].includes(provider)
+  );
+
+  for (const provider of orderedProviders) {
+    if (!isConfiguredLlmProvider(provider)) {
+      continue;
+    }
+
     try {
-      const payload = await callProxy(events, news, analytics, llmCandidates);
+      const payload = await callConfiguredLlmProvider(provider, context);
       const recommendations = normalizeLlmRecommendations(payload);
 
       if (recommendations.length > 0) {
         return {
           data: recommendations,
-          provider: `Live LLM proxy on top of quant engine (${llmCandidates.length} screened bets sent)`,
+          provider: `${llmProviderLabels[provider]} on top of quant engine (${llmCandidates.length} screened bets sent)`,
         };
       }
+
+      attemptedProviders.push(llmProviderLabels[provider]);
     } catch {
-      return {
-        data: heuristicRecommendations,
-        provider: `Deterministic quant engine (${llmCandidates.length} screened bets, LLM unavailable)`,
-      };
+      attemptedProviders.push(llmProviderLabels[provider]);
     }
   }
 
-  if (env.openRouterApiKey) {
-    try {
-      const payload = await callOpenRouter(events, news, analytics, llmCandidates);
-      const recommendations = normalizeLlmRecommendations(payload);
-
-      if (recommendations.length > 0) {
-        return {
-          data: recommendations,
-          provider: `Live OpenRouter on top of quant engine (${llmCandidates.length} screened bets sent)`,
-        };
-      }
-    } catch {
-      return {
-        data: heuristicRecommendations,
-        provider: `Deterministic quant engine (${llmCandidates.length} screened bets, LLM unavailable)`,
-      };
-    }
-  }
-
-  if (env.openAiApiKey) {
-    try {
-      const payload = await callOpenAi(events, news, analytics, llmCandidates);
-      const recommendations = normalizeLlmRecommendations(payload);
-
-      if (recommendations.length > 0) {
-        return {
-          data: recommendations,
-          provider: `Live OpenAI on top of quant engine (${llmCandidates.length} screened bets sent)`,
-        };
-      }
-    } catch {
-      return {
-        data: heuristicRecommendations,
-        provider: `Deterministic quant engine (${llmCandidates.length} screened bets, LLM unavailable)`,
-      };
-    }
-  }
+  const failureSuffix = attemptedProviders.length > 0 ? `, ${attemptedProviders.join(', ')} unavailable` : '';
 
   return {
     data: heuristicRecommendations,
-    provider: `Deterministic quant engine (${llmCandidates.length} screened bets)`,
+    provider: `Deterministic quant engine (${llmCandidates.length} screened bets${failureSuffix})`,
   };
 }
