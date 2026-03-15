@@ -349,6 +349,10 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
     draggingRef.current = true;
   };
 
+  const stopHeaderDragEvent = (event: any) => {
+    event.stopPropagation?.();
+  };
+
   const submitQuestion = async (question: string) => {
     const trimmed = question.trim();
 
@@ -473,22 +477,17 @@ export function AdvisorWindow({ events, news, analytics, recommendations, select
       ]}
     >
       <View style={[styles.windowCard, Platform.OS !== 'web' ? { maxHeight: panelHeight } : null]}>
-        <View style={[styles.windowHeader, canDragWindow ? styles.windowHeaderDraggable : null]}>
+        <View style={[styles.windowHeader, canDragWindow ? styles.windowHeaderDraggable : null]} onPointerDown={canDragWindow ? startWindowDrag : undefined}>
           <View>
             <Text style={styles.windowTitle}>Advisor</Text>
             <Text style={styles.windowSubtitle}>{supported ? 'Local WebLLM with research tools' : 'WebLLM unavailable on this runtime'}</Text>
           </View>
           <View style={styles.windowActions}>
-            {canDragWindow ? (
-              <View style={styles.dragPill} onPointerDown={startWindowDrag}>
-                <Text style={styles.dragPillText}>Drag</Text>
-              </View>
-            ) : null}
-            <Pressable style={styles.windowActionButton} onPress={() => setWindowState('minimized')}>
-              <Text style={styles.windowActionText}>Min</Text>
+            <Pressable style={styles.windowActionButton} onPointerDown={stopHeaderDragEvent} onPress={() => setWindowState('minimized')}>
+              <Text style={styles.windowActionText}>_</Text>
             </Pressable>
-            <Pressable style={styles.windowActionButton} onPress={() => setWindowState('closed')}>
-              <Text style={styles.windowActionText}>Close</Text>
+            <Pressable style={styles.windowActionButton} onPointerDown={stopHeaderDragEvent} onPress={() => setWindowState('closed')}>
+              <Text style={styles.windowActionText}>×</Text>
             </Pressable>
           </View>
         </View>
@@ -667,31 +666,21 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
   },
-  dragPill: {
-    borderWidth: 1,
-    borderColor: '#3D3D3D',
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    backgroundColor: '#1C1C1C',
-  },
-  dragPillText: {
-    color: '#BFB6A9',
-    fontSize: 12,
-    fontWeight: '700',
-  },
   windowActionButton: {
     borderWidth: 1,
     borderColor: '#3D3D3D',
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 14,
     backgroundColor: '#1C1C1C',
+    minWidth: 32,
+    alignItems: 'center',
   },
   windowActionText: {
     color: '#F5F1E8',
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: '700',
+    lineHeight: 16,
   },
   windowMetaRow: {
     flexDirection: 'row',
