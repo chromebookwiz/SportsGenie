@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 
 import { AdvisorWindow } from './src/components/AdvisorWindow';
-import { loadDashboardData } from './src/services/dashboard';
+import { loadDashboardData, type DashboardLoadProgress } from './src/services/dashboard';
 import type { BettingEvent, DashboardData, NewsArticle, ParlayRecommendation, Recommendation } from './src/types/sports';
 import {
   formatCommenceTime,
@@ -29,6 +29,11 @@ import {
 
 type LoadingState = 'idle' | 'loading' | 'refreshing';
 type SectionMode = 'all' | 'picks' | 'news' | 'lines' | 'model';
+
+type BoardLoadState = {
+  progress: number;
+  text: string;
+};
 
 const sectionModes: Array<{ key: SectionMode; label: string }> = [
   { key: 'all', label: 'Everything' },
@@ -93,6 +98,49 @@ const buildMoodCaption = (data: DashboardData | null) => {
   return `${topRecommendation.selection} leads the board while ${formatMarketLabel(topRecommendation.market).toLowerCase()} markets show the cleanest price separation and the quant model agrees.`;
 };
 
+const defaultBoardLoadState: BoardLoadState = {
+  progress: 0,
+  text: 'Preparing board sync...',
+};
+
+const getSignedMetricTone = ({
+  value,
+  threshold = 0,
+  treatAsPercent = false,
+}: {
+  value: number;
+  threshold?: number;
+  treatAsPercent?: boolean;
+}) => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  if (treatAsPercent) {
+    if (value > threshold) {
+      return styles.metricPositive;
+    }
+
+    if (value < threshold) {
+      return styles.metricNegative;
+    }
+
+    return null;
+  }
+
+  if (value > 0) {
+    return styles.metricPositive;
+  }
+
+  if (value < 0) {
+    return styles.metricNegative;
+  }
+
+  return null;
+};
+
+const formatUnitSigned = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(2)}u`;
+
 function FilterChip({
   label,
   active,
@@ -109,8 +157,43 @@ function FilterChip({
   );
 }
 
+function InfoPanel({ moodLabel, moodCaption }: { moodLabel: string; moodCaption: string }) {
+  return (
+    <View style={styles.infoPanel}>
+      <View style={styles.infoPanelHeader}>
+        <Text style={styles.infoPanelEyebrow}>Board intel</Text>
+        <Text style={styles.infoPanelTitle}>How this board works</Text>
+      </View>
+      <Text style={styles.infoPanelBody}>
+        Live odds, news, player trends, and model outputs are blended into one ranked board so the strongest prices surface first.
+      </Text>
+      <View style={styles.infoPanelGrid}>
+        <View style={styles.infoPill}>
+          <Text style={styles.infoPillLabel}>Mood</Text>
+          <Text style={styles.infoPillValue}>{moodLabel}</Text>
+        </View>
+        <View style={styles.infoPill}>
+          <Text style={styles.infoPillLabel}>What to watch</Text>
+          <Text style={styles.infoPillValue}>{moodCaption}</Text>
+        </View>
+        <View style={styles.infoPill}>
+          <Text style={styles.infoPillLabel}>Inputs</Text>
+          <Text style={styles.infoPillValue}>Live lines, news flow, quant projections, and recommendation scoring.</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function RecommendationCard({ recommendation, compact }: { recommendation: Recommendation; compact: boolean }) {
   const barWidth = `${Math.max(10, Math.min(100, recommendation.confidence))}%` as const;
+  const confidenceTone = getSignedMetricTone({ value: recommendation.confidence, threshold: 50, treatAsPercent: true });
+  const edgeTone = typeof recommendation.edgePercent === 'number' ? getSignedMetricTone({ value: recommendation.edgePercent }) : null;
+  const fairTone = typeof recommendation.fairProbability === 'number' ? getSignedMetricTone({ value: recommendation.fairProbability, threshold: 0.5, treatAsPercent: true }) : null;
+  const impliedTone = typeof recommendation.impliedProbability === 'number' ? getSignedMetricTone({ value: recommendation.impliedProbability, threshold: 0.5, treatAsPercent: true }) : null;
+  const expectedValueTone = typeof recommendation.expectedValue === 'number' ? getSignedMetricTone({ value: recommendation.expectedValue }) : null;
+  const kellyTone = typeof recommendation.kellyFraction === 'number' ? getSignedMetricTone({ value: recommendation.kellyFraction }) : null;
+  const simulationTone = typeof recommendation.simulatedWinRate === 'number' ? getSignedMetricTone({ value: recommendation.simulatedWinRate, threshold: 0.5, treatAsPercent: true }) : null;
 
   return (
     <View style={styles.recommendationCard}>
@@ -118,7 +201,7 @@ function RecommendationCard({ recommendation, compact }: { recommendation: Recom
         <View style={styles.rankToken}>
           <Text style={styles.rankBadge}>#{recommendation.rank}</Text>
         </View>
-        <Text style={styles.confidenceText}>{recommendation.confidence}% confidence</Text>
+        <Text style={[styles.confidenceText, confidenceTone]}>{recommendation.confidence}% confidence</Text>
       </View>
       <Text style={styles.recommendationMatchup}>{recommendation.matchup}</Text>
       <Text style={styles.recommendationPick}>{recommendation.selection}</Text>
@@ -126,7 +209,7 @@ function RecommendationCard({ recommendation, compact }: { recommendation: Recom
         {formatMarketLabel(recommendation.market)} via {recommendation.sportsbook} at {formatOdds(recommendation.odds)}
       </Text>
       <View style={styles.recommendationBadgeRow}>
-        {typeof recommendation.edgePercent === 'number' ? <Text style={styles.edgeBadge}>Edge {formatPercent(recommendation.edgePercent)}</Text> : null}
+        {typeof recommendation.edgePercent === 'number' ? <Text style={[styles.edgeBadge, edgeTone]}>Edge {formatPercent(recommendation.edgePercent)}</Text> : null}
         {recommendation.riskLabel ? <Text style={styles.riskBadge}>{recommendation.riskLabel} risk</Text> : null}
         {recommendation.parlayEligible ? <Text style={styles.parlayBadge}>Parlay-ready</Text> : null}
       </View>
@@ -136,10 +219,18 @@ function RecommendationCard({ recommendation, compact }: { recommendation: Recom
       <Text style={styles.recommendationReason}>{recommendation.rationale}</Text>
       {recommendation.modelSummary ? <Text style={styles.modelSummary}>{recommendation.modelSummary}</Text> : null}
       <Text style={styles.quantMetaLine}>
-        Fair {typeof recommendation.fairProbability === 'number' ? formatPercent(recommendation.fairProbability) : 'n/a'} • Implied {typeof recommendation.impliedProbability === 'number' ? formatPercent(recommendation.impliedProbability) : 'n/a'} • EV {typeof recommendation.expectedValue === 'number' ? formatPercent(recommendation.expectedValue) : 'n/a'}
+        <Text>Fair </Text>
+        <Text style={fairTone}>{typeof recommendation.fairProbability === 'number' ? formatPercent(recommendation.fairProbability) : 'n/a'}</Text>
+        <Text> • Implied </Text>
+        <Text style={impliedTone}>{typeof recommendation.impliedProbability === 'number' ? formatPercent(recommendation.impliedProbability) : 'n/a'}</Text>
+        <Text> • EV </Text>
+        <Text style={expectedValueTone}>{typeof recommendation.expectedValue === 'number' ? formatPercent(recommendation.expectedValue) : 'n/a'}</Text>
       </Text>
       <Text style={styles.quantMetaLine}>
-        Kelly {typeof recommendation.kellyFraction === 'number' ? formatPercent(recommendation.kellyFraction) : 'n/a'} • Sim {typeof recommendation.simulatedWinRate === 'number' ? formatPercent(recommendation.simulatedWinRate) : 'n/a'}
+        <Text>Kelly </Text>
+        <Text style={kellyTone}>{typeof recommendation.kellyFraction === 'number' ? formatPercent(recommendation.kellyFraction) : 'n/a'}</Text>
+        <Text> • Sim </Text>
+        <Text style={simulationTone}>{typeof recommendation.simulatedWinRate === 'number' ? formatPercent(recommendation.simulatedWinRate) : 'n/a'}</Text>
       </Text>
       {recommendation.supportingPlayers?.length ? (
         <Text numberOfLines={compact ? 2 : 3} style={styles.supportingPlayers}>
@@ -220,21 +311,35 @@ function ProviderPill({ label, value }: { label: string; value: string }) {
 }
 
 function ParlayCard({ parlay }: { parlay: ParlayRecommendation }) {
+  const parlayConfidenceTone = getSignedMetricTone({ value: parlay.confidence, threshold: 50, treatAsPercent: true });
+  const parlayOddsTone = getSignedMetricTone({ value: parlay.combinedOdds });
+  const parlayExpectedValueTone = getSignedMetricTone({ value: parlay.expectedValue });
+  const parlayKellyTone = getSignedMetricTone({ value: parlay.kellyFraction });
+  const parlaySimulationTone = getSignedMetricTone({ value: parlay.simulatedHitRate, threshold: 0.5, treatAsPercent: true });
+
   return (
     <View style={styles.parlayCard}>
       <View style={styles.parlayHeaderRow}>
         <Text style={styles.parlayTitle}>{parlay.title}</Text>
-        <Text style={styles.parlayOdds}>{formatOdds(parlay.combinedOdds)}</Text>
+        <Text style={[styles.parlayOdds, parlayOddsTone]}>{formatOdds(parlay.combinedOdds)}</Text>
       </View>
-      <Text style={styles.parlayMeta}>{parlay.confidence}% confidence • {parlay.correlationRisk} correlation risk</Text>
+      <Text style={styles.parlayMeta}>
+        <Text style={parlayConfidenceTone}>{parlay.confidence}% confidence</Text>
+        <Text> • {parlay.correlationRisk} correlation risk</Text>
+      </Text>
       <Text style={styles.parlayReason}>{parlay.rationale}</Text>
       <Text style={styles.parlayQuantLine}>
-        EV {formatPercent(parlay.expectedValue)} • Kelly {formatPercent(parlay.kellyFraction)} • Sim {formatPercent(parlay.simulatedHitRate)}
+        <Text>EV </Text>
+        <Text style={parlayExpectedValueTone}>{formatPercent(parlay.expectedValue)}</Text>
+        <Text> • Kelly </Text>
+        <Text style={parlayKellyTone}>{formatPercent(parlay.kellyFraction)}</Text>
+        <Text> • Sim </Text>
+        <Text style={parlaySimulationTone}>{formatPercent(parlay.simulatedHitRate)}</Text>
       </Text>
       {parlay.legs.map((leg) => (
         <View key={`${parlay.id}-${leg.recommendationId}`} style={styles.parlayLegRow}>
           <Text style={styles.parlayLegSelection}>{leg.selection}</Text>
-          <Text style={styles.parlayLegOdds}>{formatOdds(leg.odds)}</Text>
+          <Text style={[styles.parlayLegOdds, getSignedMetricTone({ value: leg.odds })]}>{formatOdds(leg.odds)}</Text>
         </View>
       ))}
     </View>
@@ -242,26 +347,34 @@ function ParlayCard({ parlay }: { parlay: ParlayRecommendation }) {
 }
 
 function ProjectionSummary({ data }: { data: DashboardData }) {
+  const marketConfidenceTone = getSignedMetricTone({ value: data.analytics.marketPulse.averageConfidence, threshold: 50, treatAsPercent: true });
+  const volatilityTone = getSignedMetricTone({ value: data.analytics.marketPulse.averageVolatility, threshold: 0.5, treatAsPercent: true });
+  const stabilityTone = getSignedMetricTone({ value: data.analytics.marketPulse.averageStability, threshold: 0.5, treatAsPercent: true });
+  const roiTone = getSignedMetricTone({ value: data.backtest.roi });
+
   return (
     <View style={styles.quantGrid}>
       <View style={styles.quantCard}>
         <Text style={styles.quantLabel}>Best environment</Text>
         <Text style={styles.quantValue}>{data.analytics.marketPulse.bestEnvironment}</Text>
-        <Text style={styles.quantSubtext}>{data.analytics.marketPulse.averageConfidence}% avg player-model confidence</Text>
+        <Text style={styles.quantSubtext}>
+          <Text style={marketConfidenceTone}>{data.analytics.marketPulse.averageConfidence}%</Text>
+          <Text> avg player-model confidence</Text>
+        </Text>
       </View>
       <View style={styles.quantCard}>
         <Text style={styles.quantLabel}>Market volatility</Text>
-        <Text style={styles.quantValue}>{formatPercent(data.analytics.marketPulse.averageVolatility)}</Text>
+        <Text style={[styles.quantValue, volatilityTone]}>{formatPercent(data.analytics.marketPulse.averageVolatility)}</Text>
         <Text style={styles.quantSubtext}>Lower volatility usually leads to cleaner single bets and safer parlays.</Text>
       </View>
       <View style={styles.quantCard}>
         <Text style={styles.quantLabel}>Average stability</Text>
-        <Text style={styles.quantValue}>{formatPercent(data.analytics.marketPulse.averageStability)}</Text>
+        <Text style={[styles.quantValue, stabilityTone]}>{formatPercent(data.analytics.marketPulse.averageStability)}</Text>
         <Text style={styles.quantSubtext}>Higher stability means the player-form model is seeing less variance in its core inputs.</Text>
       </View>
       <View style={styles.quantCard}>
         <Text style={styles.quantLabel}>Backtest ROI</Text>
-        <Text style={styles.quantValue}>{formatPercent(data.backtest.roi)}</Text>
+        <Text style={[styles.quantValue, roiTone]}>{formatPercent(data.backtest.roi)}</Text>
         <Text style={styles.quantSubtext}>{data.backtest.sampleSize} historical samples • calibration {data.backtest.calibrationGrade}</Text>
       </View>
     </View>
@@ -273,9 +386,11 @@ export default function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showInfoPanel, setShowInfoPanel] = useState(false);
   const [selectedSport, setSelectedSport] = useState<string>('All sports');
   const [sectionMode, setSectionMode] = useState<SectionMode>('all');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [boardLoadState, setBoardLoadState] = useState<BoardLoadState>(defaultBoardLoadState);
   const latestRequestId = useRef(0);
   const mountedRef = useRef(true);
 
@@ -287,13 +402,26 @@ export default function App() {
     latestRequestId.current = requestId;
     setLoadingState(mode);
     setErrorMessage(null);
+    setBoardLoadState(defaultBoardLoadState);
 
     try {
       if (mode === 'refreshing') {
         await impact();
       }
 
-      const nextData = await loadDashboardData({ forceRefresh: mode === 'refreshing' });
+      const nextData = await loadDashboardData({
+        forceRefresh: mode === 'refreshing',
+        onProgress: (progress: DashboardLoadProgress) => {
+          if (!mountedRef.current || latestRequestId.current !== requestId) {
+            return;
+          }
+
+          setBoardLoadState({
+            progress: progress.progress,
+            text: progress.text,
+          });
+        },
+      });
 
       if (!mountedRef.current || latestRequestId.current !== requestId) {
         return;
@@ -301,6 +429,10 @@ export default function App() {
 
       setData(nextData);
       setLastUpdated(new Date().toISOString());
+      setBoardLoadState({
+        progress: 1,
+        text: 'Board ready',
+      });
       await success();
     } catch (error) {
       if (!mountedRef.current || latestRequestId.current !== requestId) {
@@ -413,10 +545,13 @@ export default function App() {
                 <Text style={styles.playerName}>{projection.playerName}</Text>
                 <Text style={styles.playerMeta}>{projection.team} • {projection.metric}</Text>
               </View>
-              <Text style={styles.playerProjection}>{projection.projectedValue.toFixed(1)}</Text>
+              <Text style={[styles.playerProjection, getSignedMetricTone({ value: projection.projectedValue })]}>{projection.projectedValue.toFixed(1)}</Text>
             </View>
             <Text style={styles.playerStatsLine}>
-              Baseline {projection.baselineAverage.toFixed(1)} • {formatTrendLabel(projection.trendLabel)} trend • {projection.confidence}% confidence
+              <Text>Baseline </Text>
+              <Text style={getSignedMetricTone({ value: projection.baselineAverage })}>{projection.baselineAverage.toFixed(1)}</Text>
+              <Text> • {formatTrendLabel(projection.trendLabel)} trend • </Text>
+              <Text style={getSignedMetricTone({ value: projection.confidence, threshold: 50, treatAsPercent: true })}>{projection.confidence}% confidence</Text>
             </Text>
           </View>
         ))}
@@ -429,18 +564,27 @@ export default function App() {
         <View style={styles.quantGrid}>
           <View style={styles.quantCard}>
             <Text style={styles.quantLabel}>Win rate</Text>
-            <Text style={styles.quantValue}>{formatPercent(data?.backtest.winRate ?? 0)}</Text>
-            <Text style={styles.quantSubtext}>Average edge {formatPercent(data?.backtest.averageEdge ?? 0)}</Text>
+            <Text style={[styles.quantValue, getSignedMetricTone({ value: data?.backtest.winRate ?? 0, threshold: 0.5, treatAsPercent: true })]}>{formatPercent(data?.backtest.winRate ?? 0)}</Text>
+            <Text style={styles.quantSubtext}>
+              <Text>Average edge </Text>
+              <Text style={getSignedMetricTone({ value: data?.backtest.averageEdge ?? 0 })}>{formatPercent(data?.backtest.averageEdge ?? 0)}</Text>
+            </Text>
           </View>
           <View style={styles.quantCard}>
             <Text style={styles.quantLabel}>Max drawdown</Text>
-            <Text style={styles.quantValue}>{(data?.backtest.maxDrawdown ?? 0).toFixed(2)}u</Text>
-            <Text style={styles.quantSubtext}>Average Kelly {formatPercent(data?.backtest.averageKelly ?? 0)}</Text>
+            <Text style={[styles.quantValue, getSignedMetricTone({ value: -(data?.backtest.maxDrawdown ?? 0) })]}>{formatUnitSigned(-(data?.backtest.maxDrawdown ?? 0))}</Text>
+            <Text style={styles.quantSubtext}>
+              <Text>Average Kelly </Text>
+              <Text style={getSignedMetricTone({ value: data?.backtest.averageKelly ?? 0 })}>{formatPercent(data?.backtest.averageKelly ?? 0)}</Text>
+            </Text>
           </View>
           <View style={styles.quantCard}>
             <Text style={styles.quantLabel}>Brier score</Text>
             <Text style={styles.quantValue}>{(data?.backtest.brierScore ?? 0).toFixed(3)}</Text>
-            <Text style={styles.quantSubtext}>Profit {data?.backtest.profitUnits.toFixed(2)}u</Text>
+            <Text style={styles.quantSubtext}>
+              <Text>Profit </Text>
+              <Text style={getSignedMetricTone({ value: data?.backtest.profitUnits ?? 0 })}>{formatUnitSigned(data?.backtest.profitUnits ?? 0)}</Text>
+            </Text>
           </View>
         </View>
       </View>
@@ -476,17 +620,29 @@ export default function App() {
       >
         <View style={styles.heroShell}>
           <View style={styles.heroCard}>
-            <Text style={styles.eyebrow}>SportGenie</Text>
-            <Text style={styles.heroTitle}>Quant-first betting board with restrained LLM research on top.</Text>
-            <Text style={styles.heroSubtitle}>
-              Live prices, no-vig math, model signals, and tool-assisted recommendations presented in a tighter, cleaner board.
-            </Text>
-            <View style={styles.moodRow}>
+            <View style={styles.heroTopRow}>
+              <View style={styles.heroHeadingBlock}>
+                <Text style={styles.heroEyebrow}>Live betting dashboard</Text>
+                <Text style={styles.heroTitle}>sportsgenie</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={showInfoPanel ? 'Hide info panel' : 'Show info panel'}
+                style={[styles.infoButton, showInfoPanel ? styles.infoButtonActive : null]}
+                onPress={() => {
+                  void impact();
+                  setShowInfoPanel((current) => !current);
+                }}
+              >
+                <Text style={[styles.infoButtonText, showInfoPanel ? styles.infoButtonTextActive : null]}>i</Text>
+              </Pressable>
+            </View>
+            <View style={styles.heroMetaRow}>
               <View style={styles.moodChip}>
                 <Text style={styles.moodChipLabel}>Market mood</Text>
                 <Text style={styles.moodChipValue}>{moodLabel}</Text>
               </View>
-              <Text style={styles.moodCaption}>{moodCaption}</Text>
+              <Text style={styles.heroMetaText}>Sharper color, faster scan, cleaner slate controls.</Text>
             </View>
             <View style={styles.heroActionsRow}>
               <Pressable
@@ -520,6 +676,7 @@ export default function App() {
               <Text style={styles.lastUpdatedText}>Optimized for phone and tablet widths</Text>
             </View>
           </View>
+          {showInfoPanel ? <InfoPanel moodLabel={moodLabel} moodCaption={moodCaption} /> : null}
         </View>
 
         {data ? (
@@ -559,10 +716,14 @@ export default function App() {
           ))}
         </View>
 
-        {loadingState === 'loading' ? (
+        {loadingState !== 'idle' ? (
           <View style={styles.loadingCard}>
             <ActivityIndicator color="#FACC15" size="large" />
-            <Text style={styles.loadingText}>Building the board from sportsbook feeds, no-vig pricing, regression models, Monte Carlo simulations, and optional LLM ranking.</Text>
+            <View style={styles.boardLoadTrack}>
+              <View style={[styles.boardLoadFill, { width: `${Math.max(8, Math.min(100, Math.round(boardLoadState.progress * 100)))}%` }]} />
+            </View>
+            <Text style={styles.loadingText}>{boardLoadState.text}</Text>
+            <Text style={styles.loadingMetaText}>{Math.round(boardLoadState.progress * 100)}% complete</Text>
           </View>
         ) : null}
 
@@ -613,11 +774,11 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F2EFE8',
+    backgroundColor: '#EAF2FF',
   },
   screen: {
     flex: 1,
-    backgroundColor: '#F2EFE8',
+    backgroundColor: '#EAF2FF',
   },
   content: {
     paddingHorizontal: 18,
@@ -628,75 +789,105 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   heroCard: {
-    backgroundColor: '#111111',
-    borderRadius: 4,
+    backgroundColor: '#0D4CFF',
+    borderRadius: 24,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#111111',
-    shadowColor: '#000000',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    borderColor: '#1B63FF',
+    shadowColor: '#0B2B7A',
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+    gap: 16,
   },
-  eyebrow: {
-    color: '#D6C2A2',
-    fontSize: 12,
+  heroTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  heroHeadingBlock: {
+    flex: 1,
+    gap: 6,
+  },
+  heroEyebrow: {
+    color: '#BEE0FF',
+    fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-    marginBottom: 12,
   },
   heroTitle: {
-    color: '#F5F1E8',
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: '800',
-    marginBottom: 8,
+    color: '#FFFFFF',
+    fontSize: 36,
+    lineHeight: 40,
+    fontWeight: '900',
+    textTransform: 'lowercase',
   },
-  heroSubtitle: {
-    color: '#D3CEC3',
-    fontSize: 15,
-    lineHeight: 22,
+  infoButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: '#90B6FF',
+    backgroundColor: '#F5FF5B',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  moodRow: {
-    marginTop: 18,
+  infoButtonActive: {
+    backgroundColor: '#081B53',
+    borderColor: '#9FC3FF',
+  },
+  infoButtonText: {
+    color: '#081B53',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  infoButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  heroMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 10,
   },
   moodChip: {
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: '#4B4B4B',
-    backgroundColor: '#1B1B1B',
+    borderColor: '#6FD3FF',
+    backgroundColor: '#0A2E8A',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 16,
+    borderRadius: 999,
   },
   moodChipLabel: {
-    color: '#A39D8F',
+    color: '#BEE0FF',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     fontSize: 11,
   },
   moodChipValue: {
-    color: '#F5F1E8',
+    color: '#FFFFFF',
     fontWeight: '800',
     marginTop: 3,
   },
-  moodCaption: {
-    color: '#D3CEC3',
-    lineHeight: 21,
-    maxWidth: 560,
+  heroMetaText: {
+    color: '#DDEAFF',
+    lineHeight: 20,
+    fontWeight: '600',
+    flex: 1,
+    minWidth: 200,
   },
   heroActionsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
-    marginTop: 20,
   },
   primaryButton: {
-    backgroundColor: '#F0E8DA',
-    borderRadius: 16,
+    backgroundColor: '#FF6B00',
+    borderRadius: 18,
     paddingHorizontal: 18,
     paddingVertical: 14,
     justifyContent: 'center',
@@ -706,7 +897,7 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   primaryButtonText: {
-    color: '#111111',
+    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '800',
   },
@@ -717,42 +908,98 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#C45D4B',
-    backgroundColor: '#FFF7F4',
+    borderColor: '#FF6B6B',
+    backgroundColor: '#FFF0F0',
   },
   secondaryButtonText: {
-    color: '#7B2D21',
+    color: '#B42318',
     fontWeight: '700',
   },
   snapshotCard: {
     minWidth: 88,
-    backgroundColor: '#1B1B1B',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: '#343434',
+    borderColor: '#A9C6FF',
   },
   snapshotValue: {
-    color: '#F5F1E8',
+    color: '#0D4CFF',
     fontSize: 24,
     fontWeight: '800',
   },
   snapshotLabel: {
-    color: '#A39D8F',
+    color: '#506484',
     fontSize: 12,
     marginTop: 4,
   },
   heroFooterRow: {
-    marginTop: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: 8,
   },
   lastUpdatedText: {
-    color: '#A39D8F',
+    color: '#DDEAFF',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  infoPanel: {
+    marginTop: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#B8D1FF',
+    gap: 14,
+    shadowColor: '#0B2B7A',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  infoPanelHeader: {
+    gap: 4,
+  },
+  infoPanelEyebrow: {
+    color: '#FF6B00',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  infoPanelTitle: {
+    color: '#081B53',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  infoPanelBody: {
+    color: '#30425F',
+    lineHeight: 21,
+  },
+  infoPanelGrid: {
+    gap: 10,
+  },
+  infoPill: {
+    backgroundColor: '#F3F8FF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D4E3FF',
+    padding: 14,
+    gap: 4,
+  },
+  infoPillLabel: {
+    color: '#4E6FA6',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.9,
+  },
+  infoPillValue: {
+    color: '#081B53',
+    lineHeight: 20,
+    fontWeight: '600',
   },
   providersRow: {
     flexDirection: 'row',
@@ -762,27 +1009,29 @@ const styles = StyleSheet.create({
   providerPill: {
     flexGrow: 1,
     minWidth: '30%',
-    borderRadius: 14,
+    borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderWidth: 1,
-    backgroundColor: '#FBF8F1',
+    backgroundColor: '#FFFFFF',
   },
   providerPillLive: {
-    borderColor: '#111111',
+    borderColor: '#12B76A',
+    backgroundColor: '#ECFDF3',
   },
   providerPillFallback: {
-    borderColor: '#B7B0A4',
+    borderColor: '#F79009',
+    backgroundColor: '#FFF7E8',
   },
   providerLabel: {
-    color: '#6E685F',
+    color: '#5B6F92',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 4,
   },
   providerValue: {
-    color: '#111111',
+    color: '#081B53',
     fontWeight: '700',
     fontSize: 14,
   },
@@ -798,53 +1047,71 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   filterChipActive: {
-    backgroundColor: '#111111',
-    borderColor: '#111111',
+    backgroundColor: '#0D4CFF',
+    borderColor: '#0D4CFF',
   },
   filterChipIdle: {
-    backgroundColor: '#FBF8F1',
-    borderColor: '#CFC8BC',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#C6D9FF',
   },
   filterChipText: {
     fontWeight: '700',
     fontSize: 13,
   },
   filterChipTextActive: {
-    color: '#F5F1E8',
+    color: '#FFFFFF',
   },
   filterChipTextIdle: {
-    color: '#111111',
+    color: '#14305F',
   },
   loadingCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
     padding: 24,
     alignItems: 'center',
     gap: 14,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
   },
   loadingText: {
-    color: '#3C3A35',
+    color: '#16335E',
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 20,
   },
+  loadingMetaText: {
+    color: '#4E6FA6',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  boardLoadTrack: {
+    width: '100%',
+    maxWidth: 420,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: '#D8E6FF',
+    overflow: 'hidden',
+  },
+  boardLoadFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#12B76A',
+  },
   errorCard: {
-    backgroundColor: '#FFF7F4',
-    borderRadius: 4,
+    backgroundColor: '#FFF0F0',
+    borderRadius: 22,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#C45D4B',
+    borderColor: '#FF6B6B',
   },
   errorTitle: {
-    color: '#7B2D21',
+    color: '#B42318',
     fontWeight: '800',
     fontSize: 18,
     marginBottom: 8,
   },
   errorMessage: {
-    color: '#7B2D21',
+    color: '#B42318',
     lineHeight: 20,
   },
   sectionBlock: {
@@ -855,20 +1122,20 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   sectionTitle: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 22,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   sectionSubtitle: {
-    color: '#666055',
+    color: '#49617F',
     lineHeight: 20,
   },
   recommendationCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
     gap: 8,
   },
   recommendationHeaderRow: {
@@ -877,33 +1144,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   rankToken: {
-    backgroundColor: '#F0E8DA',
-    borderRadius: 14,
+    backgroundColor: '#F5FF5B',
+    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   rankBadge: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 14,
     fontWeight: '800',
   },
   confidenceText: {
-    color: '#6E685F',
+    color: '#4E6FA6',
     fontSize: 13,
     fontWeight: '700',
   },
+  metricPositive: {
+    color: '#0E9F6E',
+  },
+  metricNegative: {
+    color: '#D92D20',
+  },
   recommendationMatchup: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 19,
     fontWeight: '800',
   },
   recommendationPick: {
-    color: '#2B2925',
+    color: '#0D4CFF',
     fontSize: 17,
     fontWeight: '700',
   },
   recommendationMeta: {
-    color: '#6E685F',
+    color: '#49617F',
     fontSize: 13,
   },
   recommendationBadgeRow: {
@@ -912,8 +1185,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   edgeBadge: {
-    color: '#2F3A1B',
-    backgroundColor: '#E8E4D8',
+    color: '#075E45',
+    backgroundColor: '#D9FBE8',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -921,8 +1194,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   riskBadge: {
-    color: '#5E4A20',
-    backgroundColor: '#F0E8DA',
+    color: '#9A6700',
+    backgroundColor: '#FFF0C2',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -931,8 +1204,8 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   parlayBadge: {
-    color: '#3B3530',
-    backgroundColor: '#E8E4D8',
+    color: '#0D4CFF',
+    backgroundColor: '#E5EEFF',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -942,67 +1215,67 @@ const styles = StyleSheet.create({
   confidenceTrack: {
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#DDD6CB',
+    backgroundColor: '#D8E6FF',
     overflow: 'hidden',
   },
   confidenceFill: {
     height: '100%',
     borderRadius: 999,
-    backgroundColor: '#111111',
+    backgroundColor: '#FF6B00',
   },
   recommendationReason: {
-    color: '#2B2925',
+    color: '#16335E',
     lineHeight: 20,
   },
   modelSummary: {
-    color: '#4D4A44',
+    color: '#35517A',
     lineHeight: 19,
   },
   quantMetaLine: {
-    color: '#4D4A44',
+    color: '#35517A',
     lineHeight: 18,
     fontSize: 12,
   },
   supportingPlayers: {
-    color: '#4D4A44',
+    color: '#35517A',
     lineHeight: 19,
   },
   recommendationHeadline: {
-    color: '#7A6849',
+    color: '#B54708',
     lineHeight: 20,
   },
   quantGrid: {
     gap: 12,
   },
   quantCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
     gap: 6,
   },
   quantLabel: {
-    color: '#6E685F',
+    color: '#4E6FA6',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   quantValue: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 20,
     fontWeight: '800',
   },
   quantSubtext: {
-    color: '#4D4A44',
+    color: '#35517A',
     lineHeight: 19,
   },
   parlayCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
     gap: 10,
   },
   parlayHeaderRow: {
@@ -1012,25 +1285,25 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   parlayTitle: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 18,
     fontWeight: '800',
   },
   parlayOdds: {
-    color: '#111111',
+    color: '#0D4CFF',
     fontSize: 18,
     fontWeight: '800',
   },
   parlayMeta: {
-    color: '#6E685F',
+    color: '#49617F',
     fontSize: 13,
   },
   parlayReason: {
-    color: '#2B2925',
+    color: '#16335E',
     lineHeight: 19,
   },
   parlayQuantLine: {
-    color: '#4D4A44',
+    color: '#35517A',
     fontSize: 12,
     lineHeight: 18,
   },
@@ -1040,22 +1313,22 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#DDD6CB',
+    borderTopColor: '#D8E6FF',
   },
   parlayLegSelection: {
-    color: '#111111',
+    color: '#081B53',
     flex: 1,
   },
   parlayLegOdds: {
-    color: '#4D4A44',
+    color: '#35517A',
     fontWeight: '700',
   },
   playerCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
     gap: 6,
   },
   playerCardHeader: {
@@ -1064,30 +1337,30 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   playerName: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 17,
     fontWeight: '700',
   },
   playerMeta: {
-    color: '#6E685F',
+    color: '#49617F',
     marginTop: 4,
   },
   playerProjection: {
-    color: '#111111',
+    color: '#0D4CFF',
     fontSize: 22,
     fontWeight: '800',
   },
   playerStatsLine: {
-    color: '#2B2925',
+    color: '#16335E',
     lineHeight: 19,
   },
   newsCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 18,
     gap: 8,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
   },
   newsSourceRow: {
     flexDirection: 'row',
@@ -1095,36 +1368,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   newsSource: {
-    color: '#7A6849',
+    color: '#FF6B00',
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
   },
   newsTime: {
-    color: '#6E685F',
+    color: '#49617F',
     fontSize: 12,
   },
   newsTitle: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 18,
     fontWeight: '700',
     lineHeight: 24,
   },
   newsDescription: {
-    color: '#2B2925',
+    color: '#16335E',
     lineHeight: 20,
   },
   newsUrl: {
-    color: '#4D4A44',
+    color: '#0D4CFF',
     fontSize: 12,
     fontWeight: '700',
   },
   eventCard: {
-    backgroundColor: '#FBF8F1',
-    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#D1CAC0',
+    borderColor: '#C6D9FF',
     gap: 14,
   },
   eventHeaderRow: {
@@ -1133,31 +1406,31 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   eventLeague: {
-    color: '#7A6849',
+    color: '#FF6B00',
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
     letterSpacing: 0.7,
   },
   eventTime: {
-    color: '#6E685F',
+    color: '#49617F',
     fontSize: 12,
   },
   eventMatchup: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 20,
     fontWeight: '800',
   },
   bookmakerBlock: {
-    backgroundColor: '#F7F3EB',
-    borderRadius: 4,
+    backgroundColor: '#F5F9FF',
+    borderRadius: 16,
     padding: 14,
     gap: 10,
     borderWidth: 1,
-    borderColor: '#E2DBD0',
+    borderColor: '#D4E3FF',
   },
   bookmakerName: {
-    color: '#111111',
+    color: '#081B53',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1165,7 +1438,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   marketLabel: {
-    color: '#6E685F',
+    color: '#4E6FA6',
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
@@ -1180,10 +1453,10 @@ const styles = StyleSheet.create({
   },
   outcomeName: {
     flex: 1,
-    color: '#111111',
+    color: '#16335E',
   },
   outcomePrice: {
-    color: '#4D4A44',
+    color: '#0D4CFF',
     fontWeight: '700',
   },
   desktopGrid: {
@@ -1200,7 +1473,7 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   emptyText: {
-    color: '#6E685F',
+    color: '#49617F',
     lineHeight: 20,
     paddingVertical: 8,
   },

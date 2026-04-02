@@ -582,6 +582,45 @@ const toRecommendations = (candidates: CandidateBet[]): Recommendation[] =>
     simulatedWinRate: candidate.simulatedWinRate,
   }));
 
+const buildEmergencyRecommendations = (events: BettingEvent[]): Recommendation[] => {
+  const rawOutcomes = events.flatMap((event) =>
+    event.bookmakers.flatMap((bookmaker) =>
+      bookmaker.markets.flatMap((market) =>
+        market.outcomes.map((outcome, index) => ({
+          id: `${event.id}:${bookmaker.key}:${market.key}:${outcome.name}:${outcome.point ?? index}`,
+          matchup: `${event.awayTeam} at ${event.homeTeam}`,
+          market: market.key,
+          selection: candidateLabel(outcome),
+          sportsbook: bookmaker.title,
+          odds: outcome.price,
+          rankSeed: americanToImpliedProbability(outcome.price),
+        }))
+      )
+    )
+  );
+
+  return rawOutcomes
+    .sort((left, right) => right.rankSeed - left.rankSeed)
+    .slice(0, Math.max(3, Math.min(env.maxRecommendations, rawOutcomes.length)))
+    .map((candidate, index) => ({
+      id: candidate.id,
+      rank: index + 1,
+      matchup: candidate.matchup,
+      market: candidate.market,
+      selection: candidate.selection,
+      sportsbook: candidate.sportsbook,
+      odds: candidate.odds,
+      confidence: 52,
+      score: Number((5.2 - index * 0.08).toFixed(2)),
+      rationale: 'Fallback board pick generated from the best currently posted price while richer quant inputs finish or remain incomplete.',
+      impliedProbability: candidate.rankSeed,
+      fairProbability: candidate.rankSeed,
+      expectedValue: 0,
+      kellyFraction: 0,
+      simulatedWinRate: candidate.rankSeed,
+    }));
+};
+
 const parseJson = (content: string): LlmResponse | null => {
   const normalized = content.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');
 
@@ -808,8 +847,11 @@ export async function generateRecommendations(
   news: NewsArticle[],
   analytics: AnalyticsOverview
 ): Promise<ProviderResult<Recommendation[]>> {
-  const heuristicCandidates = prefilterCandidates(buildCandidates(events, news, analytics)).sort((left, right) => right.score - left.score);
+  const allCandidates = buildCandidates(events, news, analytics).sort((left, right) => right.score - left.score);
+  const heuristicCandidates = prefilterCandidates(allCandidates).sort((left, right) => right.score - left.score);
   const heuristicRecommendations = toRecommendations(heuristicCandidates);
+  const emergencyRecommendations = heuristicRecommendations.length > 0 ? heuristicRecommendations : toRecommendations(allCandidates);
+  const guaranteedRecommendations = emergencyRecommendations.length > 0 ? emergencyRecommendations : buildEmergencyRecommendations(events);
   const llmCandidates = heuristicCandidates.slice(0, Math.max(env.maxRecommendations * 2, 30));
 
   const context: LlmRequestContext = {
@@ -848,7 +890,7 @@ export async function generateRecommendations(
   const failureSuffix = attemptedProviders.length > 0 ? `, ${attemptedProviders.join(', ')} unavailable` : '';
 
   return {
-    data: heuristicRecommendations,
+    data: guaranteedRecommendations,
     provider: `Deterministic quant engine (${llmCandidates.length} screened bets${failureSuffix})`,
   };
 }

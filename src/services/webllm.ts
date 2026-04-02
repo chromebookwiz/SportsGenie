@@ -121,11 +121,14 @@ type WebLlmModule = {
 };
 
 const defaultModelOptions = [
-  'Llama-3.2-3B-Instruct-q4f32_1-MLC',
-  'Phi-3.5-mini-instruct-q4f32_1-MLC',
-  'Qwen2.5-7B-Instruct-q4f32_1-MLC',
-  'Llama-3.1-8B-Instruct-q4f32_1-MLC',
+  'Hermes-3-Llama-3.1-8B-q4f16_1-MLC',
+  'Hermes-3-Llama-3.1-8B-q4f32_1-MLC',
+  'Hermes-2-Pro-Mistral-7B-q4f16_1-MLC',
+  'Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC',
+  'Hermes-2-Pro-Llama-3-8B-q4f32_1-MLC',
 ];
+
+const toolCapableModelSet = new Set(defaultModelOptions);
 
 const buildModelOptions = () => {
   const unique = new Set<string>();
@@ -133,12 +136,12 @@ const buildModelOptions = () => {
   for (const modelId of [...env.webLlmModels, env.webLlmModel, ...defaultModelOptions]) {
     const normalized = String(modelId || '').trim();
 
-    if (normalized) {
+    if (normalized && toolCapableModelSet.has(normalized)) {
       unique.add(normalized);
     }
   }
 
-  return Array.from(unique);
+  return Array.from(unique.size > 0 ? unique : toolCapableModelSet);
 };
 
 export type WebLlmLoadProgress = {
@@ -153,14 +156,20 @@ const engineCache = new Map<string, Promise<WebLlmEngine>>();
 const loadedModelIds = new Set<string>();
 const modelProgressListeners = new Map<string, Set<WebLlmProgressListener>>();
 const latestModelProgress = new Map<string, WebLlmLoadProgress>();
-let activeModelId = env.webLlmModel;
+let activeModelId = '';
 
 export const webLlmModelOptions = buildModelOptions();
 
 const resolveModelId = (modelId?: string) => {
   const candidate = String(modelId ?? activeModelId ?? env.webLlmModel).trim();
-  return candidate || env.webLlmModel;
+  if (candidate && toolCapableModelSet.has(candidate)) {
+    return candidate;
+  }
+
+  return webLlmModelOptions[0] ?? defaultModelOptions[0];
 };
+
+activeModelId = resolveModelId(env.webLlmModel);
 
 const normalizeProgressValue = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
