@@ -622,8 +622,7 @@ export default function App() {
           <View style={styles.heroCard}>
             <View style={styles.heroTopRow}>
               <View style={styles.heroHeadingBlock}>
-                <Text style={styles.heroEyebrow}>Live betting dashboard</Text>
-                <Text style={styles.heroTitle}>sportsgenie</Text>
+                <Text style={styles.heroTitle}>sports genie</Text>
               </View>
               <Pressable
                 accessibilityRole="button"
@@ -636,13 +635,6 @@ export default function App() {
               >
                 <Text style={[styles.infoButtonText, showInfoPanel ? styles.infoButtonTextActive : null]}>i</Text>
               </Pressable>
-            </View>
-            <View style={styles.heroMetaRow}>
-              <View style={styles.moodChip}>
-                <Text style={styles.moodChipLabel}>Market mood</Text>
-                <Text style={styles.moodChipValue}>{moodLabel}</Text>
-              </View>
-              <Text style={styles.heroMetaText}>Sharper color, faster scan, cleaner slate controls.</Text>
             </View>
             <View style={styles.heroActionsRow}>
               <Pressable
@@ -673,7 +665,6 @@ export default function App() {
               <Text style={styles.lastUpdatedText}>
                 {lastUpdated ? `Updated ${formatDashboardTimestamp(lastUpdated)}` : 'Waiting for first sync'}
               </Text>
-              <Text style={styles.lastUpdatedText}>Optimized for phone and tablet widths</Text>
             </View>
           </View>
           {showInfoPanel ? <InfoPanel moodLabel={moodLabel} moodCaption={moodCaption} /> : null}
@@ -811,19 +802,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 6,
   },
-  heroEyebrow: {
-    color: '#BEE0FF',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
   heroTitle: {
     color: '#FFFFFF',
     fontSize: 36,
     lineHeight: 40,
     fontWeight: '900',
-    textTransform: 'lowercase',
   },
   infoButton: {
     width: 42,
@@ -846,39 +829,6 @@ const styles = StyleSheet.create({
   },
   infoButtonTextActive: {
     color: '#FFFFFF',
-  },
-  heroMetaRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 10,
-  },
-  moodChip: {
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: '#6FD3FF',
-    backgroundColor: '#0A2E8A',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-  },
-  moodChipLabel: {
-    color: '#BEE0FF',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontSize: 11,
-  },
-  moodChipValue: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    marginTop: 3,
-  },
-  heroMetaText: {
-    color: '#DDEAFF',
-    lineHeight: 20,
-    fontWeight: '600',
-    flex: 1,
-    minWidth: 200,
   },
   heroActionsRow: {
     flexDirection: 'row',
